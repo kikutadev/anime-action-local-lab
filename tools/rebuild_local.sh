@@ -4,8 +4,15 @@ set -euo pipefail
 ROOT="${0:A:h:h}"
 BLENDER_BIN="${BLENDER_BIN:-/Applications/Blender.app/Contents/MacOS/Blender}"
 UNITY_BIN="${UNITY_BIN:-/Applications/Unity/Hub/Editor/6000.3.22f1/Unity.app/Contents/MacOS/Unity}"
-HYMOTION_ROOT="${HYMOTION_ROOT:-/Users/kiku28/pj/game/.tmp/HY-Motion-1.0}"
+HYMOTION_ROOT="${HYMOTION_ROOT:-$ROOT/../.tmp/HY-Motion-1.0}"
 CHARACTER_SPEC="${CHARACTER_SPEC:-$ROOT/blender/specs/vanguard.json}"
+
+if [[ "$CHARACTER_SPEC" != /* ]]; then
+  CHARACTER_SPEC="$ROOT/$CHARACTER_SPEC"
+fi
+if [[ "$HYMOTION_ROOT" != /* ]]; then
+  HYMOTION_ROOT="$ROOT/$HYMOTION_ROOT"
+fi
 
 echo "[1/4] Generate Blender anime fighter from $CHARACTER_SPEC"
 "$BLENDER_BIN" -b --python "$ROOT/blender/generate_anime_fighter.py" -- --spec "$CHARACTER_SPEC"
