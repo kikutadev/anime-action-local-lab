@@ -1,0 +1,23 @@
+# Unity transient
+unity/Library/
+unity/Logs/
+unity/Temp/
+unity/Obj/
+unity/UserSettings/
+unity/Build/
+unity/Builds/
+unity/MemoryCaptures/
+unity/.vs/
+unity/*.csproj
+unity/*.sln
+
+# Local runtime/test artifacts
+*.log
+unity-host.out
+webgl-preview*.png
+generated/
+.DS_Store
+
+# Python
+__pycache__/
+.venv/
