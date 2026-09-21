@@ -10,6 +10,7 @@ public static class AnimeActionWebBuild
     [MenuItem("Anime Action/Build WebGL")]
     public static void BuildWebGl()
     {
+        AnimeActionAcceptance.Validate();
         AnimeActionSetup.GenerateDemo();
 
         string projectRoot = Directory.GetParent(Application.dataPath)!.FullName;

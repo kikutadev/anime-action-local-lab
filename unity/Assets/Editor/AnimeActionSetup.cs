@@ -122,6 +122,54 @@ public static class AnimeActionSetup
         rig.rightLowerLeg = rll;
         rig.swordRoot = swordRoot;
 
+        // Prefer the Blender-generated model when present. The procedural rig above
+        // remains an always-buildable fallback for fresh clones or generator failures.
+        GameObject generatedModelAsset = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Models/AnimeFighter.fbx");
+        if (generatedModelAsset != null)
+        {
+            GameObject generatedModel = (GameObject)PrefabUtility.InstantiatePrefab(generatedModelAsset);
+            generatedModel.name = "BlenderGeneratedHumanoid";
+            generatedModel.transform.SetParent(fighter.transform, false);
+            generatedModel.transform.localPosition = Vector3.zero;
+            generatedModel.transform.localRotation = Quaternion.identity;
+            generatedModel.transform.localScale = Vector3.one;
+
+            Animator importedAnimator = generatedModel.GetComponentInChildren<Animator>();
+            if (importedAnimator != null)
+            {
+                importedAnimator.enabled = false;
+            }
+
+            ProceduralAnimeRig generatedRig = generatedModel.AddComponent<ProceduralAnimeRig>();
+            generatedModel.AddComponent<GeneratedMotionClipPlayer>();
+            generatedRig.hips = FindNamedTransform(generatedModel.transform, "Hips");
+            generatedRig.spine = FindNamedTransform(generatedModel.transform, "Spine");
+            generatedRig.chest = FindNamedTransform(generatedModel.transform, "Chest");
+            generatedRig.upperChest = FindNamedTransform(generatedModel.transform, "UpperChest");
+            generatedRig.neck = FindNamedTransform(generatedModel.transform, "Neck");
+            generatedRig.head = FindNamedTransform(generatedModel.transform, "Head");
+            generatedRig.leftUpperArm = FindNamedTransform(generatedModel.transform, "LeftUpperArm");
+            generatedRig.rightUpperArm = FindNamedTransform(generatedModel.transform, "RightUpperArm");
+            generatedRig.leftLowerArm = FindNamedTransform(generatedModel.transform, "LeftLowerArm");
+            generatedRig.rightLowerArm = FindNamedTransform(generatedModel.transform, "RightLowerArm");
+            generatedRig.leftUpperLeg = FindNamedTransform(generatedModel.transform, "LeftUpperLeg");
+            generatedRig.rightUpperLeg = FindNamedTransform(generatedModel.transform, "RightUpperLeg");
+            generatedRig.leftLowerLeg = FindNamedTransform(generatedModel.transform, "LeftLowerLeg");
+            generatedRig.rightLowerLeg = FindNamedTransform(generatedModel.transform, "RightLowerLeg");
+            generatedRig.swordRoot = FindNamedTransform(generatedModel.transform, "RightHand");
+
+            if (generatedRig.hips != null && generatedRig.head != null && generatedRig.rightUpperArm != null)
+            {
+                rigRoot.SetActive(false);
+                Debug.Log("Using Blender-generated anime fighter model.");
+            }
+            else
+            {
+                Object.DestroyImmediate(generatedModel);
+                Debug.LogWarning("Generated FBX is missing required bones; using procedural fallback.");
+            }
+        }
+
         // Stage.
         GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
         floor.name = "ArenaFloor";
@@ -256,5 +304,18 @@ public static class AnimeActionSetup
 
     private static void AddHairSpike(string name, Vector3 position, Vector3 scale, Vector3 euler, Material mat, Transform head, Transform root)
         => VisualPrimitive(PrimitiveType.Capsule, name, position, scale, euler, mat, head, root);
+
+    private static Transform FindNamedTransform(Transform root, string name)
+    {
+        foreach (Transform transform in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (transform.name == name)
+            {
+                return transform;
+            }
+        }
+
+        return null;
+    }
 
 }

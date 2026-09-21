@@ -89,13 +89,14 @@ BONES = [
     ("Root", (0,0,0), (0,0,0.14), None),
     ("Hips", (0,0,0.91), (0,0,1.06), "Root"),
     ("Spine", (0,0,1.06), (0,0,1.27), "Hips"),
-    ("Chest", (0,0,1.27), (0,0,1.44), "Spine"),
-    ("Neck", (0,0,1.44), (0,0,1.55), "Chest"),
+    ("Chest", (0,0,1.27), (0,0,1.36), "Spine"),
+    ("UpperChest", (0,0,1.36), (0,0,1.44), "Chest"),
+    ("Neck", (0,0,1.44), (0,0,1.55), "UpperChest"),
     ("Head", (0,0,1.55), (0,0,1.88), "Neck"),
-    ("LeftUpperArm", (-0.23,0,1.39), (-0.43,0,1.20), "Chest"),
+    ("LeftUpperArm", (-0.23,0,1.39), (-0.43,0,1.20), "UpperChest"),
     ("LeftLowerArm", (-0.43,0,1.20), (-0.58,0,1.02), "LeftUpperArm"),
     ("LeftHand", (-0.58,0,1.02), (-0.62,-0.02,0.94), "LeftLowerArm"),
-    ("RightUpperArm", (0.23,0,1.39), (0.43,0,1.20), "Chest"),
+    ("RightUpperArm", (0.23,0,1.39), (0.43,0,1.20), "UpperChest"),
     ("RightLowerArm", (0.43,0,1.20), (0.58,0,1.02), "RightUpperArm"),
     ("RightHand", (0.58,0,1.02), (0.62,-0.02,0.94), "RightLowerArm"),
     ("LeftUpperLeg", (-0.105,0,0.91), (-0.11,0,0.55), "Hips"),
@@ -135,7 +136,7 @@ def create_character(rig):
     parts = [
         (sphere("HeadMesh", (0,-0.005,1.73), (0.205,0.185,0.235), "skin"), "Head"),
         (capsule("NeckMesh", (0,0,1.45), (0,0,1.57), 0.072, "skin"), "Neck"),
-        (sphere("ChestMesh", (0,0,1.31), (0.235,0.135,0.23), "coat"), "Chest"),
+        (sphere("ChestMesh", (0,0,1.31), (0.235,0.135,0.23), "coat"), "UpperChest"),
         (sphere("WaistMesh", (0,0,1.07), (0.17,0.115,0.19), "shirt"), "Spine"),
         (sphere("HipMesh", (0,0,0.91), (0.19,0.13,0.16), "pants"), "Hips"),
     ]
@@ -165,7 +166,7 @@ def create_character(rig):
     ]
     for i,(loc,rot) in enumerate(spikes):
         parts.append((cone(f"HairSpike{i}", loc, 0.085, 0.018, 0.26, "hair", rot, 10), "Head"))
-    parts.append((cube("Scarf", (0,-0.145,1.39), (0.22,0.06,0.08), "accent", 0.025), "Chest"))
+    parts.append((cube("Scarf", (0,-0.145,1.39), (0.22,0.06,0.08), "accent", 0.025), "UpperChest"))
     for side in (-1,1):
         parts.append((cube("CoatTailL" if side<0 else "CoatTailR", (side*0.09,0.045,0.91), (0.14,0.07,0.30), "coat", 0.03), "Hips"))
     for obj in (
