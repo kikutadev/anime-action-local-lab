@@ -1,0 +1,27 @@
+{
+  "name": "Azure Vanguard",
+  "palette": {
+    "skin": "F2C6A8",
+    "hair": "1C2230",
+    "coat": "233A66",
+    "shirt": "E8EEF5",
+    "pants": "202739",
+    "pants_dark": "141A28",
+    "boots": "19151A",
+    "accent": "C33E4A",
+    "eye_white": "FAFAF8",
+    "iris": "2E7CA5",
+    "mouth": "7D3543",
+    "metal": "808A9A",
+    "blade": "DDE8F2",
+    "grip": "33252A",
+    "floor": "28303A"
+  },
+  "style": {
+    "eye_scale": 1.0,
+    "bang_length": 1.0,
+    "hair_spike_scale": 1.0,
+    "shoulder_scale": 1.0,
+    "coat_tail_length": 1.0
+  }
+}

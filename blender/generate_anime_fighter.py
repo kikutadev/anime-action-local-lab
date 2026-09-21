@@ -6,7 +6,10 @@ character mesh or animation asset is embedded. Blender 4.5+.
 
 from __future__ import annotations
 
+import argparse
+import json
 import math
+import sys
 from pathlib import Path
 import bpy
 from mathutils import Vector
@@ -15,6 +18,18 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "generated"
 OUT.mkdir(parents=True, exist_ok=True)
 FPS = 30
+SPEC = {}
+
+
+def load_spec():
+    argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--spec", type=Path, default=ROOT / "blender/specs/vanguard.json")
+    args, _ = parser.parse_known_args(argv)
+    path = args.spec.resolve()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["_path"] = str(path)
+    return data
 
 
 def reset_scene() -> None:
@@ -133,6 +148,13 @@ def bone_parent(obj, rig, bone_name):
 
 
 def create_character(rig):
+    style = SPEC.get("style", {})
+    eye_scale = float(style.get("eye_scale", 1.0))
+    bang_length = float(style.get("bang_length", 1.0))
+    hair_spike_scale = float(style.get("hair_spike_scale", 1.0))
+    shoulder_scale = float(style.get("shoulder_scale", 1.0))
+    coat_tail_length = float(style.get("coat_tail_length", 1.0))
+
     parts = [
         (sphere("HeadMesh", (0,-0.005,1.73), (0.205,0.185,0.235), "skin"), "Head"),
         (capsule("NeckMesh", (0,0,1.45), (0,0,1.57), 0.072, "skin"), "Neck"),
@@ -153,9 +175,9 @@ def create_character(rig):
         side_name = "L" if side < 0 else "R"
         parts += [
             (sphere(side_name+"Ear", (side*0.202,-0.002,1.735), (0.030,0.022,0.050), "skin", 12, 8), "Head"),
-            (sphere(side_name+"Eye", (side*0.075,-0.174,1.765), (0.052,0.018,0.064), "eye_white", 16, 10), "Head"),
-            (sphere(side_name+"Iris", (side*0.075,-0.190,1.762), (0.029,0.010,0.041), "iris", 16, 10), "Head"),
-            (sphere(side_name+"Pupil", (side*0.075,-0.198,1.758), (0.013,0.006,0.023), "hair", 12, 8), "Head"),
+            (sphere(side_name+"Eye", (side*0.075,-0.174,1.765), (0.052*eye_scale,0.018,0.064*eye_scale), "eye_white", 16, 10), "Head"),
+            (sphere(side_name+"Iris", (side*0.075,-0.190,1.762), (0.029*eye_scale,0.010,0.041*eye_scale), "iris", 16, 10), "Head"),
+            (sphere(side_name+"Pupil", (side*0.075,-0.198,1.758), (0.013*eye_scale,0.006,0.023*eye_scale), "hair", 12, 8), "Head"),
             (sphere(side_name+"EyeHighlight", (side*0.065,-0.204,1.778), (0.008,0.004,0.010), "eye_white", 10, 6), "Head"),
             (capsule(side_name+"Brow", (side*0.118,-0.191,1.835), (side*0.035,-0.195,1.842), 0.010, "hair", 8), "Head"),
         ]
@@ -172,7 +194,7 @@ def create_character(rig):
         (0.130, -0.155, 1.815, 0.18),
     ]
     for i, (x, y, z, roll) in enumerate(bang_specs):
-        parts.append((cone(f"HairBang{i}", (x,y,z), 0.016, 0.055, 0.22, "hair", (0.05,0.0,roll), 10), "Head"))
+        parts.append((cone(f"HairBang{i}", (x,y,z), 0.016, 0.055, 0.22*bang_length, "hair", (0.05,0.0,roll), 10), "Head"))
     spikes = [
         ((0,-0.11,1.96), (0.0,0.35,0.0)),
         ((-0.10,-0.08,1.94), (0.15,0.25,-0.25)),
@@ -182,16 +204,16 @@ def create_character(rig):
         ((0.0,0.13,1.90), (math.pi,0,0)),
     ]
     for i,(loc,rot) in enumerate(spikes):
-        parts.append((cone(f"HairSpike{i}", loc, 0.085, 0.018, 0.26, "hair", rot, 10), "Head"))
+        parts.append((cone(f"HairSpike{i}", loc, 0.085, 0.018, 0.26*hair_spike_scale, "hair", rot, 10), "Head"))
     parts.append((cube("Scarf", (0,-0.145,1.39), (0.22,0.06,0.08), "accent", 0.025), "UpperChest"))
     parts.append((capsule("ScarfTail", (0.10,0.04,1.37), (0.25,0.30,1.20), 0.040, "accent", 10), "UpperChest"))
     parts.append((cube("Belt", (0,-0.002,0.995), (0.38,0.145,0.035), "pants_dark", 0.012), "Hips"))
     parts.append((cube("BeltBuckle", (0,-0.148,0.995), (0.052,0.022,0.048), "metal", 0.008), "Hips"))
     for side in (-1,1):
         prefix = "Left" if side < 0 else "Right"
-        parts.append((sphere(prefix+"ShoulderGuard", (side*0.245,-0.005,1.395), (0.115,0.105,0.075), "coat", 14, 8), prefix+"UpperArm"))
+        parts.append((sphere(prefix+"ShoulderGuard", (side*0.245,-0.005,1.395), (0.115*shoulder_scale,0.105*shoulder_scale,0.075*shoulder_scale), "coat", 14, 8), prefix+"UpperArm"))
         parts.append((cube(prefix+"Cuff", (side*0.52,-0.005,1.08), (0.085,0.075,0.055), "pants_dark", 0.015), prefix+"LowerArm"))
-        parts.append((cube("CoatTailL" if side<0 else "CoatTailR", (side*0.09,0.045,0.91), (0.14,0.07,0.30), "coat", 0.03), "Hips"))
+        parts.append((cube("CoatTailL" if side<0 else "CoatTailR", (side*0.09,0.045,0.91), (0.14,0.07,0.30*coat_tail_length), "coat", 0.03), "Hips"))
     for obj in (
         capsule("SwordGrip", (0.61,-0.03,0.97), (0.61,-0.03,0.78), 0.026, "grip", 10),
         cube("SwordGuard", (0.61,-0.03,0.79), (0.18,0.045,0.035), "metal", 0.01),
@@ -327,23 +349,25 @@ def export(rig):
 
 
 if __name__ == "__main__":
+    SPEC = load_spec()
+    palette = SPEC.get("palette", {})
     reset_scene()
     MATS.update({
-        "skin": material("Skin", "F2C6A8"),
-        "hair": material("Hair", "1C2230", 0.0, 0.45),
-        "coat": material("Coat", "233A66"),
-        "shirt": material("Shirt", "E8EEF5"),
-        "pants": material("Pants", "202739"),
-        "pants_dark": material("PantsDark", "141A28"),
-        "boots": material("Boots", "19151A"),
-        "accent": material("Accent", "C33E4A"),
-        "eye_white": material("EyeWhite", "FAFAF8"),
-        "iris": material("Iris", "2E7CA5"),
-        "mouth": material("Mouth", "7D3543"),
-        "metal": material("Metal", "808A9A", 0.75, 0.35),
-        "blade": material("Blade", "DDE8F2", 0.75, 0.22),
-        "grip": material("Grip", "33252A"),
-        "floor": material("Floor", "28303A"),
+        "skin": material("Skin", palette.get("skin", "F2C6A8")),
+        "hair": material("Hair", palette.get("hair", "1C2230"), 0.0, 0.45),
+        "coat": material("Coat", palette.get("coat", "233A66")),
+        "shirt": material("Shirt", palette.get("shirt", "E8EEF5")),
+        "pants": material("Pants", palette.get("pants", "202739")),
+        "pants_dark": material("PantsDark", palette.get("pants_dark", "141A28")),
+        "boots": material("Boots", palette.get("boots", "19151A")),
+        "accent": material("Accent", palette.get("accent", "C33E4A")),
+        "eye_white": material("EyeWhite", palette.get("eye_white", "FAFAF8")),
+        "iris": material("Iris", palette.get("iris", "2E7CA5")),
+        "mouth": material("Mouth", palette.get("mouth", "7D3543")),
+        "metal": material("Metal", palette.get("metal", "808A9A"), 0.75, 0.35),
+        "blade": material("Blade", palette.get("blade", "DDE8F2"), 0.75, 0.22),
+        "grip": material("Grip", palette.get("grip", "33252A")),
+        "floor": material("Floor", palette.get("floor", "28303A")),
     })
     rig = create_rig()
     create_character(rig)
@@ -351,4 +375,4 @@ if __name__ == "__main__":
     export(rig)
     setup_preview()
     bpy.ops.render.render(write_still=True)
-    print("Generated:", OUT / "anime_fighter.fbx")
+    print("Generated:", OUT / "anime_fighter.fbx", "spec=", SPEC.get("_path"), "name=", SPEC.get("name"))

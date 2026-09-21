@@ -1,0 +1,27 @@
+{
+  "name": "Rose Duelist",
+  "palette": {
+    "skin": "EFC2A6",
+    "hair": "5A2533",
+    "coat": "5B2030",
+    "shirt": "F2E8E2",
+    "pants": "2A2028",
+    "pants_dark": "181218",
+    "boots": "20161A",
+    "accent": "D5A84B",
+    "eye_white": "FAFAF8",
+    "iris": "4A8C69",
+    "mouth": "8A3B4A",
+    "metal": "8F887E",
+    "blade": "E6E1D5",
+    "grip": "3A2720",
+    "floor": "2B2A32"
+  },
+  "style": {
+    "eye_scale": 0.94,
+    "bang_length": 1.18,
+    "hair_spike_scale": 0.84,
+    "shoulder_scale": 0.90,
+    "coat_tail_length": 1.16
+  }
+}

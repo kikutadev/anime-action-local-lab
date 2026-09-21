@@ -5,6 +5,7 @@ M1 Max / 32GB 上で、既製キャラクターを主成果物にせず、ロー
 ## Current state
 
 - Blender/Python でアニメ調人型・骨格・剣を生成
+- キャラ外観を JSON spec で差し替え、共通骨格のまま別キャラを再生成
 - Blender 生成 FBX を Unity の操作キャラとして使用
 - HY-Motion 1.0 Lite を Apple Silicon / MPS で実行
 - Qwen3-8B + CLIP と motion DiT を段階ロードして 32 GB 内に収める
@@ -26,7 +27,13 @@ https://kikutadev.github.io/anime-action-local-lab/
 ./tools/rebuild_local.sh
 ```
 
-HY-Motion の斬撃まで再生成する場合:
+別キャラ仕様で再生成する場合:
+
+```bash
+CHARACTER_SPEC=blender/specs/rose_duelist.json ./tools/rebuild_local.sh
+```
+
+HY-Motion の斬撃・回避まで再生成する場合:
 
 ```bash
 RUN_HYMOTION=1 ./tools/rebuild_local.sh
@@ -37,6 +44,7 @@ RUN_HYMOTION=1 ./tools/rebuild_local.sh
 - `BLENDER_BIN`: Blender executable
 - `UNITY_BIN`: Unity executable
 - `HYMOTION_ROOT`: external HY-Motion checkout
+- `CHARACTER_SPEC`: Blender character spec JSON; 既定は `blender/specs/vanguard.json`
 - `MOTION_PROMPT`: Text-to-Motion prompt
 - `MOTION_DURATION`: motion duration seconds
 - `MOTION_STEPS`: validation/inference steps
@@ -47,6 +55,7 @@ RUN_HYMOTION=1 ./tools/rebuild_local.sh
 ## Structure
 
 - `blender/generate_anime_fighter.py`: 自前アニメ調キャラクター生成
+- `blender/specs/`: 色・目・髪・肩・コート丈などのキャラ仕様
 - `tools/hymotion_mps_generate.py`: Apple Silicon 向け staged Text-to-Motion
 - `tools/hymotion_to_unity.py`: HY-Motion 出力 → Unity runtime clip
 - `tools/patches/hymotion-mps.patch`: upstream HY-Motion の MPS 対応差分

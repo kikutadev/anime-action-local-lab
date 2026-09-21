@@ -5,19 +5,21 @@ ROOT="${0:A:h:h}"
 BLENDER_BIN="${BLENDER_BIN:-/Applications/Blender.app/Contents/MacOS/Blender}"
 UNITY_BIN="${UNITY_BIN:-/Applications/Unity/Hub/Editor/6000.3.22f1/Unity.app/Contents/MacOS/Unity}"
 HYMOTION_ROOT="${HYMOTION_ROOT:-/Users/kiku28/pj/game/.tmp/HY-Motion-1.0}"
+CHARACTER_SPEC="${CHARACTER_SPEC:-$ROOT/blender/specs/vanguard.json}"
 
-echo "[1/4] Generate Blender anime fighter"
-"$BLENDER_BIN" -b --python "$ROOT/blender/generate_anime_fighter.py"
+echo "[1/4] Generate Blender anime fighter from $CHARACTER_SPEC"
+"$BLENDER_BIN" -b --python "$ROOT/blender/generate_anime_fighter.py" -- --spec "$CHARACTER_SPEC"
 mkdir -p "$ROOT/unity/Assets/Models"
 cp "$ROOT/generated/anime_fighter.fbx" "$ROOT/unity/Assets/Models/AnimeFighter.fbx"
 
 if [[ "${RUN_HYMOTION:-0}" == "1" ]]; then
-  echo "[2/4] Generate HY-Motion attack"
+  echo "[2/4] Generate HY-Motion attack and dodge"
   PY="$HYMOTION_ROOT/.venv/bin/python"
   if [[ ! -x "$PY" ]]; then
     echo "HY-Motion venv not found: $PY" >&2
     exit 2
   fi
+
   "$PY" "$ROOT/tools/hymotion_mps_generate.py" \
     --hymotion-root "$HYMOTION_ROOT" \
     --prompt "${MOTION_PROMPT:-A swordsman takes one step forward and performs a fast horizontal slash, then returns to a ready stance.}" \
@@ -46,7 +48,7 @@ if [[ "${RUN_HYMOTION:-0}" == "1" ]]; then
     --input "$ROOT/generated/hymotion/dodge.npz" \
     --output "$ROOT/unity/Assets/Resources/HYMotionDodge.json"
 else
-  echo "[2/4] Keep checked-in HY-Motion clip (set RUN_HYMOTION=1 to regenerate)"
+  echo "[2/4] Keep checked-in HY-Motion clips (set RUN_HYMOTION=1 to regenerate)"
 fi
 
 echo "[3/4] Build verified Unity WebGL"
@@ -64,4 +66,4 @@ if grep -Eq "error CS|Exception:|Build failed" "$ROOT/unity-build.log"; then
 fi
 
 echo "[4/4] Done"
-grep -E "Using Blender-generated|WebGL build succeeded" "$ROOT/unity-build.log" || true
+grep -E "asset acceptance|scene acceptance|Using Blender-generated|WebGL build succeeded" "$ROOT/unity-build.log" || true
