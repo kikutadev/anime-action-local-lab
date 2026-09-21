@@ -18,7 +18,38 @@ public static class AnimeActionAcceptance
         ValidateGeneratedModel();
         ValidateGeneratedMotion("Assets/Resources/HYMotionSlash.json", 30);
         ValidateGeneratedMotion("Assets/Resources/HYMotionDodge.json", 30);
-        Debug.Log("Anime action acceptance passed.");
+        Debug.Log("Anime action asset acceptance passed.");
+    }
+
+    public static void ValidateGeneratedScene()
+    {
+        GameObject generatedModel = GameObject.Find("BlenderGeneratedHumanoid");
+        if (generatedModel == null)
+        {
+            throw new InvalidOperationException("Generated scene is not using the Blender fighter model.");
+        }
+
+        Renderer[] renderers = generatedModel.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length < 10)
+        {
+            throw new InvalidOperationException($"Generated scene has too few Blender renderers: {renderers.Length}");
+        }
+
+        foreach (Renderer renderer in renderers)
+        {
+            foreach (Material material in renderer.sharedMaterials)
+            {
+                if (material == null || material.shader == null || material.shader.name != "AnimeAction/Toon")
+                {
+                    string materialName = material != null ? material.name : "<null>";
+                    string shaderName = material?.shader != null ? material.shader.name : "<null>";
+                    throw new InvalidOperationException(
+                        $"Renderer {renderer.name} is not toon shaded: material={materialName}, shader={shaderName}");
+                }
+            }
+        }
+
+        Debug.Log($"Anime action scene acceptance passed: {renderers.Length} toon-shaded renderers.");
     }
 
     private static void ValidateGeneratedModel()

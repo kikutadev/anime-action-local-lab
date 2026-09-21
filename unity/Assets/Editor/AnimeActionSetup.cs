@@ -140,6 +140,8 @@ public static class AnimeActionSetup
                 importedAnimator.enabled = false;
             }
 
+            ApplyToonMaterials(generatedModel);
+
             ProceduralAnimeRig generatedRig = generatedModel.AddComponent<ProceduralAnimeRig>();
             generatedModel.AddComponent<GeneratedMotionClipPlayer>();
             generatedRig.hips = FindNamedTransform(generatedModel.transform, "Hips");
@@ -304,6 +306,71 @@ public static class AnimeActionSetup
 
     private static void AddHairSpike(string name, Vector3 position, Vector3 scale, Vector3 euler, Material mat, Transform head, Transform root)
         => VisualPrimitive(PrimitiveType.Capsule, name, position, scale, euler, mat, head, root);
+
+    private static void ApplyToonMaterials(GameObject model)
+    {
+        Shader toonShader = Shader.Find("AnimeAction/Toon");
+        if (toonShader == null)
+        {
+            Debug.LogWarning("AnimeAction/Toon shader is unavailable; keeping imported materials.");
+            return;
+        }
+
+        foreach (Renderer renderer in model.GetComponentsInChildren<Renderer>(true))
+        {
+            Material[] materials = renderer.sharedMaterials;
+            for (int index = 0; index < materials.Length; index++)
+            {
+                Material source = materials[index];
+                if (source == null)
+                {
+                    continue;
+                }
+
+                materials[index] = MakeToonMaterial(source, toonShader);
+            }
+
+            renderer.sharedMaterials = materials;
+        }
+    }
+
+    private static Material MakeToonMaterial(Material source, Shader toonShader)
+    {
+        string safeName = source.name
+            .Replace("/", "_")
+            .Replace("\\", "_")
+            .Replace(":", "_");
+        string path = $"{MaterialDir}/Toon_{safeName}.mat";
+
+        Color baseColor = source.HasProperty("_Color") ? source.color : Color.white;
+        Color shadeColor = new(
+            Mathf.Clamp01(baseColor.r * 0.50f),
+            Mathf.Clamp01(baseColor.g * 0.55f),
+            Mathf.Clamp01(baseColor.b * 0.64f),
+            baseColor.a);
+
+        Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (material == null)
+        {
+            material = new Material(toonShader) { name = $"Toon_{safeName}" };
+            AssetDatabase.CreateAsset(material, path);
+        }
+        else if (material.shader != toonShader)
+        {
+            material.shader = toonShader;
+        }
+
+        material.SetColor("_Color", baseColor);
+        material.SetColor("_ShadeColor", shadeColor);
+        material.SetColor("_RimColor", new Color(0.34f, 0.48f, 0.78f, 1f));
+        material.SetFloat("_RampThreshold", 0.44f);
+        material.SetFloat("_RampSoftness", 0.035f);
+        material.SetFloat("_AmbientStrength", 0.16f);
+        material.SetFloat("_RimPower", 3.7f);
+        material.SetFloat("_RimStrength", 0.14f);
+        EditorUtility.SetDirty(material);
+        return material;
+    }
 
     private static Transform FindNamedTransform(Transform root, string name)
     {

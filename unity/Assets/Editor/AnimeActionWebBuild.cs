@@ -12,6 +12,7 @@ public static class AnimeActionWebBuild
     {
         AnimeActionAcceptance.Validate();
         AnimeActionSetup.GenerateDemo();
+        AnimeActionAcceptance.ValidateGeneratedScene();
 
         string projectRoot = Directory.GetParent(Application.dataPath)!.FullName;
         string output = Path.GetFullPath(Path.Combine(projectRoot, "..", "publish"));
