@@ -1,0 +1,118 @@
+diff --git a/hymotion/utils/t2m_runtime.py b/hymotion/utils/t2m_runtime.py
+index 2d5faff..097972b 100644
+--- a/hymotion/utils/t2m_runtime.py
++++ b/hymotion/utils/t2m_runtime.py
+@@ -62,12 +62,20 @@ class T2MRuntime:
+         self.local_ip = _get_local_ip()
+ 
+         if force_cpu:
+-            print(">>> [INFO] CPU mode enabled via HY_MOTION_DEVICE=cpu environment variable")
++            print(">>> [INFO] CPU mode enabled")
++            self.devices = [torch.device("cpu")]
+             self.device_ids = []
+         elif torch.cuda.is_available():
+             all_ids = list(range(torch.cuda.device_count()))
+-            self.device_ids = all_ids if device_ids is None else [i for i in device_ids if i in all_ids]
++            selected = all_ids if device_ids is None else [i for i in device_ids if i in all_ids]
++            self.devices = [torch.device(f"cuda:{gid}") for gid in selected]
++            self.device_ids = selected
++        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
++            print(">>> [INFO] Apple Metal (MPS) mode enabled")
++            self.devices = [torch.device("mps")]
++            self.device_ids = []
+         else:
++            self.devices = [torch.device("cpu")]
+             self.device_ids = []
+ 
+         self.pipelines = []
+@@ -99,7 +107,7 @@ class T2MRuntime:
+             self.fbx_converter = None
+             print(">>> FBX module not found. FBX export will be disabled.")
+ 
+-        device_info = self.device_ids if self.device_ids else "cpu"
++        device_info = [str(device) for device in self.devices]
+         if self.skip_model_loading:
+             print(
+                 f">>> T2MRuntime initialized (using randomly initialized weights) in IP {self.local_ip}, devices={device_info}"
+@@ -118,38 +126,22 @@ class T2MRuntime:
+         # Use allow_empty_ckpt=True when skip_model_loading is True
+         allow_empty_ckpt = self.skip_model_loading
+ 
+-        if not self.device_ids:
++        self.pipelines = []
++        for device in self.devices:
+             pipeline = load_object(
+                 config["train_pipeline"],
+                 config["train_pipeline_args"],
+                 network_module=config["network_module"],
+                 network_module_args=config["network_module_args"],
+             )
+-            device = torch.device("cpu")
+             pipeline.load_in_demo(
+                 self.ckpt_name,
+                 build_text_encoder=not self.skip_text,
+                 allow_empty_ckpt=allow_empty_ckpt,
+             )
+             pipeline.to(device)
+-            self.pipelines = [pipeline]
+-            self._gpu_load = [0]
+-        else:
+-            for gid in self.device_ids:
+-                p = load_object(
+-                    config["train_pipeline"],
+-                    config["train_pipeline_args"],
+-                    network_module=config["network_module"],
+-                    network_module_args=config["network_module_args"],
+-                )
+-                p.load_in_demo(
+-                    self.ckpt_name,
+-                    build_text_encoder=not self.skip_text,
+-                    allow_empty_ckpt=allow_empty_ckpt,
+-                )
+-                p.to(torch.device(f"cuda:{gid}"))
+-                self.pipelines.append(p)
+-            self._gpu_load = [0] * len(self.pipelines)
++            self.pipelines.append(pipeline)
++        self._gpu_load = [0] * len(self.pipelines)
+ 
+         self._loaded = True
+ 
+@@ -238,6 +230,8 @@ class T2MRuntime:
+             self._release_pipeline(pi)
+             if torch.cuda.is_available():
+                 torch.cuda.empty_cache()
++            if torch.backends.mps.is_available():
++                torch.mps.empty_cache()
+ 
+     def load_text_encoder(self) -> None:
+         """
+diff --git a/hymotion/utils/type_converter.py b/hymotion/utils/type_converter.py
+index 9f1d02a..34da7c0 100644
+--- a/hymotion/utils/type_converter.py
++++ b/hymotion/utils/type_converter.py
+@@ -3,20 +3,11 @@ from torch import nn
+ 
+ 
+ def get_module_device(module: nn.Module) -> torch.device:
+-    """Get the device of a module.
++    """Return the actual device of a parameterized module.
+ 
+-    Args:
+-        module (nn.Module): A module contains the parameters.
+-
+-    Returns:
+-        torch.device: The device of the module.
++    Works for CPU, CUDA and Apple Metal (MPS).
+     """
+     try:
+-        next(module.parameters())
+-    except StopIteration:
+-        raise ValueError("The input module should contain parameters.")
+-
+-    if next(module.parameters()).is_cuda:
+-        return torch.device(next(module.parameters()).get_device())
+-
+-    return torch.device("cpu")
++        return next(module.parameters()).device
++    except StopIteration as exc:
++        raise ValueError("The input module should contain parameters.") from exc

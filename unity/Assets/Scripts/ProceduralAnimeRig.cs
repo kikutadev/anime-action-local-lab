@@ -5,7 +5,10 @@ public sealed class ProceduralAnimeRig : MonoBehaviour
 {
     [Header("Bones")]
     public Transform hips;
+    public Transform spine;
     public Transform chest;
+    public Transform upperChest;
+    public Transform neck;
     public Transform head;
     public Transform leftUpperArm;
     public Transform rightUpperArm;
@@ -24,6 +27,7 @@ public sealed class ProceduralAnimeRig : MonoBehaviour
     private bool dodging;
     private float attackPhase;
     private float dodgePhase;
+    private GeneratedMotionClipPlayer generatedMotion;
 
     public void SetState(float move, bool attack, bool dodge)
     {
@@ -45,9 +49,10 @@ public sealed class ProceduralAnimeRig : MonoBehaviour
 
     private void Awake()
     {
-        Cache(hips, chest, head, leftUpperArm, rightUpperArm, leftLowerArm, rightLowerArm,
+        Cache(hips, spine, chest, upperChest, neck, head, leftUpperArm, rightUpperArm, leftLowerArm, rightLowerArm,
             leftUpperLeg, rightUpperLeg, leftLowerLeg, rightLowerLeg, swordRoot);
         hipsBasePosition = hips != null ? hips.localPosition : Vector3.zero;
+        generatedMotion = GetComponent<GeneratedMotionClipPlayer>();
     }
 
     private void Cache(params Transform[] bones)
@@ -61,8 +66,23 @@ public sealed class ProceduralAnimeRig : MonoBehaviour
         }
     }
 
+    public float PlayAttack()
+    {
+        if (generatedMotion != null && generatedMotion.IsReady)
+        {
+            return generatedMotion.Play();
+        }
+
+        return 0.52f;
+    }
+
     private void LateUpdate()
     {
+        if (generatedMotion != null && generatedMotion.IsPlaying)
+        {
+            return;
+        }
+
         foreach ((Transform bone, Quaternion rotation) in baseRotations)
         {
             bone.localRotation = rotation;
@@ -87,7 +107,7 @@ public sealed class ProceduralAnimeRig : MonoBehaviour
         AddRot(chest, 5f * moveAmount, 0f, -stride * 4f);
         AddRot(head, -2f * moveAmount, 0f, stride * 2f);
 
-        if (attacking)
+        if (attacking && (generatedMotion == null || !generatedMotion.IsReady))
         {
             attackPhase = Mathf.Min(1f, attackPhase + Time.deltaTime / 0.52f);
             ApplyAttack(attackPhase);

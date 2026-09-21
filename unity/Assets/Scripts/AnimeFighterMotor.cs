@@ -96,6 +96,8 @@ public sealed class AnimeFighterMotor : MonoBehaviour
         return (forward * input.y + right * input.x).normalized * Mathf.Clamp01(input.magnitude);
     }
 
+    public void TriggerAttack() => TryAttack();
+
     private void TryAttack()
     {
         if (IsDodging || IsAttacking)
@@ -103,8 +105,9 @@ public sealed class AnimeFighterMotor : MonoBehaviour
             return;
         }
 
-        attackTimer = 0.52f;
-        Invoke(nameof(ResolveAttack), 0.17f);
+        float generatedDuration = rig != null ? rig.PlayAttack() : 0f;
+        attackTimer = generatedDuration > 0f ? generatedDuration : 0.52f;
+        Invoke(nameof(ResolveAttack), Mathf.Max(0.17f, attackTimer * 0.5f));
     }
 
     private void ResolveAttack()

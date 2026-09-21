@@ -35,22 +35,25 @@ public static class AnimeActionSetup
         cc.radius = 0.34f;
         cc.center = new Vector3(0f, 0.95f, 0f);
         fighter.AddComponent<AnimeFighterMotor>();
+        fighter.AddComponent<DemoAutoPlay>();
 
         GameObject rigRoot = new("GeneratedHumanoid");
         rigRoot.transform.SetParent(fighter.transform, false);
         ProceduralAnimeRig rig = rigRoot.AddComponent<ProceduralAnimeRig>();
+        rigRoot.AddComponent<GeneratedMotionClipPlayer>();
 
         Transform root = Bone("Root", rigRoot.transform, new Vector3(0f, 0f, 0f), rigRoot.transform);
         Transform hips = Bone("Hips", root, new Vector3(0f, 0.91f, 0f), rigRoot.transform);
         Transform spine = Bone("Spine", hips, new Vector3(0f, 1.06f, 0f), rigRoot.transform);
-        Transform chest = Bone("Chest", spine, new Vector3(0f, 1.28f, 0f), rigRoot.transform);
-        Transform neck = Bone("Neck", chest, new Vector3(0f, 1.47f, 0f), rigRoot.transform);
+        Transform chest = Bone("Chest", spine, new Vector3(0f, 1.22f, 0f), rigRoot.transform);
+        Transform upperChest = Bone("UpperChest", chest, new Vector3(0f, 1.36f, 0f), rigRoot.transform);
+        Transform neck = Bone("Neck", upperChest, new Vector3(0f, 1.47f, 0f), rigRoot.transform);
         Transform head = Bone("Head", neck, new Vector3(0f, 1.58f, 0f), rigRoot.transform);
 
-        Transform lua = Bone("LeftUpperArm", chest, new Vector3(-0.22f, 1.39f, 0f), rigRoot.transform);
+        Transform lua = Bone("LeftUpperArm", upperChest, new Vector3(-0.22f, 1.39f, 0f), rigRoot.transform);
         Transform lla = Bone("LeftLowerArm", lua, new Vector3(-0.43f, 1.20f, 0f), rigRoot.transform);
         Transform lh = Bone("LeftHand", lla, new Vector3(-0.58f, 1.02f, -0.01f), rigRoot.transform);
-        Transform rua = Bone("RightUpperArm", chest, new Vector3(0.22f, 1.39f, 0f), rigRoot.transform);
+        Transform rua = Bone("RightUpperArm", upperChest, new Vector3(0.22f, 1.39f, 0f), rigRoot.transform);
         Transform rla = Bone("RightLowerArm", rua, new Vector3(0.43f, 1.20f, 0f), rigRoot.transform);
         Transform rh = Bone("RightHand", rla, new Vector3(0.58f, 1.02f, -0.01f), rigRoot.transform);
 
@@ -104,7 +107,10 @@ public static class AnimeActionSetup
         VisualCube("SwordBlade", new Vector3(0.60f, 0.49f, 0f), new Vector3(0.11f, 0.64f, 0.045f), metal, swordRoot, rigRoot.transform);
 
         rig.hips = hips;
+        rig.spine = spine;
         rig.chest = chest;
+        rig.upperChest = upperChest;
+        rig.neck = neck;
         rig.head = head;
         rig.leftUpperArm = lua;
         rig.rightUpperArm = rua;
