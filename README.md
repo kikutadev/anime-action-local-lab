@@ -9,6 +9,7 @@ M1 Max / 32GB 上で、既製キャラクターを主成果物にせず、ロー
 - HY-Motion 1.0 Lite を Apple Silicon / MPS で実行
 - Qwen3-8B + CLIP と motion DiT を段階ロードして 32 GB 内に収める
 - HY-Motion の SMPL-H 主要18トラックを Unity 骨格へリターゲット
+- 斬撃 45f / 回避 30f をローカル生成し、実ゲーム操作へ接続
 - 移動・カメラ・回避・敵への斬撃判定を実装
 - Unity 6.3 WebGL を GitHub Pages へデプロイ
 - ビルド前にモデル骨格・モーションクリップを acceptance validation
@@ -39,7 +40,8 @@ RUN_HYMOTION=1 ./tools/rebuild_local.sh
 - `MOTION_PROMPT`: Text-to-Motion prompt
 - `MOTION_DURATION`: motion duration seconds
 - `MOTION_STEPS`: validation/inference steps
-- `MOTION_SEED`: seed
+- `MOTION_SEED`: attack seed
+- `DODGE_PROMPT`, `DODGE_DURATION`, `DODGE_SEED`: dodge generation
 - `TEXT_DEVICE`: `cpu` or `mps`; 32 GB Mac では staged loading のため `cpu` を既定
 
 ## Structure

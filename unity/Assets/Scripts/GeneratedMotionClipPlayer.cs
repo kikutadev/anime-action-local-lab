@@ -26,56 +26,101 @@ public sealed class GeneratedMotionClipPlayer : MonoBehaviour
     private sealed class RuntimeTrack
     {
         public Transform transform;
-        public Quaternion baseRotation;
         public Quaternion[] rotations;
     }
 
-    [SerializeField] private string resourceName = "HYMotionSlash";
+    private sealed class RuntimeClip
+    {
+        public MotionClipData data;
+        public List<RuntimeTrack> tracks;
+        public Vector3[] rootTranslations;
+    }
+
+    [SerializeField] private string defaultResourceName = "HYMotionSlash";
     [SerializeField] private bool applyRootMotion;
     [SerializeField, Range(0f, 1.5f)] private float rootMotionScale = 1f;
 
-    private readonly List<RuntimeTrack> tracks = new();
-    private MotionClipData clip;
-    private Vector3[] rootTranslations = Array.Empty<Vector3>();
+    private readonly Dictionary<string, RuntimeClip> clips = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Transform> boneMap = new(StringComparer.Ordinal);
+    private readonly Dictionary<Transform, Quaternion> baseRotations = new();
+
+    private RuntimeClip activeClip;
     private Vector3 basePosition;
     private float playhead;
 
-    public bool IsReady => clip != null && tracks.Count > 0;
+    public bool IsReady => GetOrLoad(defaultResourceName) != null;
     public bool IsPlaying { get; private set; }
-    public float Duration => clip?.duration ?? 0f;
-    public string Source => clip?.source ?? string.Empty;
-    public int FrameCount => clip?.frameCount ?? 0;
+    public float Duration => activeClip?.data.duration ?? GetOrLoad(defaultResourceName)?.data.duration ?? 0f;
+    public string Source => activeClip?.data.source ?? GetOrLoad(defaultResourceName)?.data.source ?? string.Empty;
+    public int FrameCount => activeClip?.data.frameCount ?? GetOrLoad(defaultResourceName)?.data.frameCount ?? 0;
 
     private void Awake()
     {
         basePosition = transform.localPosition;
-        Load();
-    }
 
-    private void Load()
-    {
-        TextAsset asset = Resources.Load<TextAsset>(resourceName);
-        if (asset == null)
-        {
-            Debug.LogWarning($"Generated motion resource not found: {resourceName}");
-            return;
-        }
-
-        clip = JsonUtility.FromJson<MotionClipData>(asset.text);
-        if (clip == null || clip.frameCount < 2 || clip.fps <= 0)
-        {
-            Debug.LogError($"Invalid generated motion resource: {resourceName}");
-            clip = null;
-            return;
-        }
-
-        Dictionary<string, Transform> boneMap = new(StringComparer.Ordinal);
         foreach (Transform node in GetComponentsInChildren<Transform>(true))
         {
             boneMap.TryAdd(node.name, node);
+            baseRotations.TryAdd(node, node.localRotation);
         }
 
-        foreach (MotionBoneData bone in clip.bones)
+        GetOrLoad(defaultResourceName);
+        GetOrLoad("HYMotionDodge", warnIfMissing: false);
+    }
+
+    public bool HasClip(string resourceName) => GetOrLoad(resourceName, warnIfMissing: false) != null;
+
+    public float Play() => Play(defaultResourceName);
+
+    public float Play(string resourceName)
+    {
+        RuntimeClip next = GetOrLoad(resourceName);
+        if (next == null)
+        {
+            return 0f;
+        }
+
+        RestoreBasePose();
+        activeClip = next;
+        playhead = 0f;
+        IsPlaying = true;
+        return next.data.duration;
+    }
+
+    public void Stop()
+    {
+        IsPlaying = false;
+        activeClip = null;
+        RestoreBasePose();
+    }
+
+    private RuntimeClip GetOrLoad(string resourceName, bool warnIfMissing = true)
+    {
+        if (clips.TryGetValue(resourceName, out RuntimeClip existing))
+        {
+            return existing;
+        }
+
+        TextAsset asset = Resources.Load<TextAsset>(resourceName);
+        if (asset == null)
+        {
+            if (warnIfMissing)
+            {
+                Debug.LogWarning($"Generated motion resource not found: {resourceName}");
+            }
+
+            return null;
+        }
+
+        MotionClipData data = JsonUtility.FromJson<MotionClipData>(asset.text);
+        if (data == null || data.frameCount < 2 || data.fps <= 0 || data.bones == null)
+        {
+            Debug.LogError($"Invalid generated motion resource: {resourceName}");
+            return null;
+        }
+
+        List<RuntimeTrack> tracks = new();
+        foreach (MotionBoneData bone in data.bones)
         {
             if (!boneMap.TryGetValue(bone.name, out Transform target))
             {
@@ -83,7 +128,12 @@ public sealed class GeneratedMotionClipPlayer : MonoBehaviour
                 continue;
             }
 
-            int frameCount = bone.rotation.Length / 4;
+            int frameCount = bone.rotation?.Length / 4 ?? 0;
+            if (frameCount == 0)
+            {
+                continue;
+            }
+
             Quaternion[] rotations = new Quaternion[frameCount];
             for (int frame = 0; frame < frameCount; frame++)
             {
@@ -98,72 +148,73 @@ public sealed class GeneratedMotionClipPlayer : MonoBehaviour
             tracks.Add(new RuntimeTrack
             {
                 transform = target,
-                baseRotation = target.localRotation,
                 rotations = rotations,
             });
         }
 
-        int rootFrames = clip.rootTranslation?.Length / 3 ?? 0;
-        rootTranslations = new Vector3[rootFrames];
+        int rootFrames = data.rootTranslation?.Length / 3 ?? 0;
+        Vector3[] rootTranslations = new Vector3[rootFrames];
         for (int frame = 0; frame < rootFrames; frame++)
         {
             int i = frame * 3;
             rootTranslations[frame] = new Vector3(
-                clip.rootTranslation[i],
-                clip.rootTranslation[i + 1],
-                clip.rootTranslation[i + 2]);
+                data.rootTranslation[i],
+                data.rootTranslation[i + 1],
+                data.rootTranslation[i + 2]);
         }
 
-        Debug.Log($"Loaded generated motion: {resourceName}, {clip.frameCount}f @ {clip.fps}fps, {tracks.Count} tracks, source={clip.source}");
-    }
-
-    public float Play()
-    {
-        if (!IsReady)
+        if (tracks.Count == 0)
         {
-            return 0f;
+            Debug.LogError($"Generated motion has no bindable tracks: {resourceName}");
+            return null;
         }
 
-        playhead = 0f;
-        IsPlaying = true;
-        return Duration;
-    }
+        RuntimeClip loaded = new()
+        {
+            data = data,
+            tracks = tracks,
+            rootTranslations = rootTranslations,
+        };
+        clips[resourceName] = loaded;
 
-    public void Stop()
-    {
-        IsPlaying = false;
-        RestoreBasePose();
+        Debug.Log(
+            $"Loaded generated motion: {resourceName}, {data.frameCount}f @ {data.fps}fps, " +
+            $"{tracks.Count} tracks, source={data.source}");
+        return loaded;
     }
 
     private void LateUpdate()
     {
-        if (!IsPlaying || clip == null)
+        if (!IsPlaying || activeClip == null)
         {
             return;
         }
 
+        MotionClipData data = activeClip.data;
         playhead += Time.deltaTime;
-        float frame = Mathf.Clamp(playhead * clip.fps, 0f, clip.frameCount - 1f);
+        float frame = Mathf.Clamp(playhead * data.fps, 0f, data.frameCount - 1f);
         int a = Mathf.FloorToInt(frame);
-        int b = Mathf.Min(a + 1, clip.frameCount - 1);
+        int b = Mathf.Min(a + 1, data.frameCount - 1);
         float t = frame - a;
 
-        foreach (RuntimeTrack track in tracks)
+        foreach (RuntimeTrack track in activeClip.tracks)
         {
             int ta = Mathf.Min(a, track.rotations.Length - 1);
             int tb = Mathf.Min(b, track.rotations.Length - 1);
             Quaternion generated = Quaternion.Slerp(track.rotations[ta], track.rotations[tb], t);
-            track.transform.localRotation = track.baseRotation * generated;
+            track.transform.localRotation = baseRotations[track.transform] * generated;
         }
 
-        if (applyRootMotion && rootTranslations.Length > 0)
+        if (applyRootMotion && activeClip.rootTranslations.Length > 0)
         {
-            int ra = Mathf.Min(a, rootTranslations.Length - 1);
-            int rb = Mathf.Min(b, rootTranslations.Length - 1);
-            transform.localPosition = basePosition + Vector3.Lerp(rootTranslations[ra], rootTranslations[rb], t) * rootMotionScale;
+            int ra = Mathf.Min(a, activeClip.rootTranslations.Length - 1);
+            int rb = Mathf.Min(b, activeClip.rootTranslations.Length - 1);
+            transform.localPosition =
+                basePosition +
+                Vector3.Lerp(activeClip.rootTranslations[ra], activeClip.rootTranslations[rb], t) * rootMotionScale;
         }
 
-        if (playhead >= Duration)
+        if (playhead >= data.duration)
         {
             Stop();
         }
@@ -171,9 +222,12 @@ public sealed class GeneratedMotionClipPlayer : MonoBehaviour
 
     private void RestoreBasePose()
     {
-        foreach (RuntimeTrack track in tracks)
+        foreach ((Transform target, Quaternion rotation) in baseRotations)
         {
-            track.transform.localRotation = track.baseRotation;
+            if (target != null)
+            {
+                target.localRotation = rotation;
+            }
         }
 
         transform.localPosition = basePosition;

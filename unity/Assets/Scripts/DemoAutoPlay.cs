@@ -12,14 +12,23 @@ public sealed class DemoAutoPlay : MonoBehaviour
 
     private IEnumerator Start()
     {
-        if (!Application.absoluteURL.Contains("demo=1"))
+        string url = Application.absoluteURL;
+        bool attackDemo = url.Contains("demo=1") || url.Contains("demo=attack");
+        bool dodgeDemo = url.Contains("demo=dodge");
+        if (!attackDemo && !dodgeDemo)
         {
             yield break;
         }
 
-        // Deterministic browser acceptance mode: capture a generated attack
-        // without changing normal interactive gameplay.
+        // Deterministic browser acceptance mode; normal gameplay is unaffected.
         yield return new WaitForSeconds(1.0f);
-        motor.TriggerAttack();
+        if (dodgeDemo)
+        {
+            motor.TriggerDodge();
+        }
+        else
+        {
+            motor.TriggerAttack();
+        }
     }
 }

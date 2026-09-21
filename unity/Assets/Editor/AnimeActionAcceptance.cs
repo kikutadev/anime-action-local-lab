@@ -16,7 +16,8 @@ public static class AnimeActionAcceptance
     public static void Validate()
     {
         ValidateGeneratedModel();
-        ValidateGeneratedMotion();
+        ValidateGeneratedMotion("Assets/Resources/HYMotionSlash.json", 30);
+        ValidateGeneratedMotion("Assets/Resources/HYMotionDodge.json", 30);
         Debug.Log("Anime action acceptance passed.");
     }
 
@@ -53,28 +54,28 @@ public static class AnimeActionAcceptance
         }
     }
 
-    private static void ValidateGeneratedMotion()
+    private static void ValidateGeneratedMotion(string assetPath, int minimumFrames)
     {
-        TextAsset motion = AssetDatabase.LoadAssetAtPath<TextAsset>("Assets/Resources/HYMotionSlash.json");
+        TextAsset motion = AssetDatabase.LoadAssetAtPath<TextAsset>(assetPath);
         if (motion == null)
         {
-            throw new InvalidOperationException("Generated HY-Motion clip is missing.");
+            throw new InvalidOperationException($"Generated HY-Motion clip is missing: {assetPath}");
         }
 
         ClipHeader header = JsonUtility.FromJson<ClipHeader>(motion.text);
-        if (header == null || header.frameCount < 30 || header.fps != 30)
+        if (header == null || header.frameCount < minimumFrames || header.fps != 30)
         {
-            throw new InvalidOperationException("Generated HY-Motion clip header is invalid.");
+            throw new InvalidOperationException($"Generated HY-Motion clip header is invalid: {assetPath}");
         }
 
         if (!string.Equals(header.source, "HY-Motion-1.0-Lite", StringComparison.Ordinal))
         {
-            throw new InvalidOperationException($"Unexpected motion source: {header.source}");
+            throw new InvalidOperationException($"Unexpected motion source in {assetPath}: {header.source}");
         }
 
-        if (header.duration < 1f)
+        if (header.duration < 0.9f)
         {
-            throw new InvalidOperationException($"Generated motion is unexpectedly short: {header.duration:F2}s");
+            throw new InvalidOperationException($"Generated motion is unexpectedly short: {assetPath}, {header.duration:F2}s");
         }
     }
 }

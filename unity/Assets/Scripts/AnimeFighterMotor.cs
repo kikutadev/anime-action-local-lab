@@ -97,6 +97,7 @@ public sealed class AnimeFighterMotor : MonoBehaviour
     }
 
     public void TriggerAttack() => TryAttack();
+    public void TriggerDodge() => TryDodge();
 
     private void TryAttack()
     {
@@ -140,5 +141,6 @@ public sealed class AnimeFighterMotor : MonoBehaviour
         Vector3 move = CameraRelative(raw);
         dodgeDirection = move.sqrMagnitude > 0.01f ? move.normalized : transform.forward;
         dodgeTimer = 0.42f;
+        rig?.PlayDodge();
     }
 }

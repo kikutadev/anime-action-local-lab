@@ -68,12 +68,22 @@ public sealed class ProceduralAnimeRig : MonoBehaviour
 
     public float PlayAttack()
     {
-        if (generatedMotion != null && generatedMotion.IsReady)
+        if (generatedMotion != null && generatedMotion.HasClip("HYMotionSlash"))
         {
-            return generatedMotion.Play();
+            return generatedMotion.Play("HYMotionSlash");
         }
 
         return 0.52f;
+    }
+
+    public float PlayDodge()
+    {
+        if (generatedMotion != null && generatedMotion.HasClip("HYMotionDodge"))
+        {
+            return generatedMotion.Play("HYMotionDodge");
+        }
+
+        return 0.42f;
     }
 
     private void LateUpdate()

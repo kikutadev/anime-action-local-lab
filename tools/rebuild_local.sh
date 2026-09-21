@@ -31,6 +31,20 @@ if [[ "${RUN_HYMOTION:-0}" == "1" ]]; then
     --hymotion-root "$HYMOTION_ROOT" \
     --input "$ROOT/generated/hymotion/slash.npz" \
     --output "$ROOT/unity/Assets/Resources/HYMotionSlash.json"
+
+  "$PY" "$ROOT/tools/hymotion_mps_generate.py" \
+    --hymotion-root "$HYMOTION_ROOT" \
+    --prompt "${DODGE_PROMPT:-A swordsman makes a fast evasive backward step, lowering the torso and keeping the sword ready, then returns to a combat stance.}" \
+    --duration "${DODGE_DURATION:-1.0}" \
+    --seed "${DODGE_SEED:-84}" \
+    --steps "${MOTION_STEPS:-12}" \
+    --text-device "${TEXT_DEVICE:-cpu}" \
+    --output "$ROOT/generated/hymotion/dodge.npz"
+
+  "$PY" "$ROOT/tools/hymotion_to_unity.py" \
+    --hymotion-root "$HYMOTION_ROOT" \
+    --input "$ROOT/generated/hymotion/dodge.npz" \
+    --output "$ROOT/unity/Assets/Resources/HYMotionDodge.json"
 else
   echo "[2/4] Keep checked-in HY-Motion clip (set RUN_HYMOTION=1 to regenerate)"
 fi
