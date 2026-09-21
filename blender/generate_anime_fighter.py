@@ -150,12 +150,29 @@ def create_character(rig):
             (cube(prefix+"BootMesh", (side*0.11,-0.075,0.105), (0.16,0.28,0.14), "boots", 0.04), prefix+"Foot"),
         ]
     for side in (-1,1):
+        side_name = "L" if side < 0 else "R"
         parts += [
-            (sphere(("L" if side < 0 else "R")+"Eye", (side*0.075,-0.174,1.765), (0.052,0.018,0.064), "eye_white", 16, 10), "Head"),
-            (sphere(("L" if side < 0 else "R")+"Iris", (side*0.075,-0.190,1.762), (0.029,0.010,0.041), "iris", 16, 10), "Head"),
+            (sphere(side_name+"Ear", (side*0.202,-0.002,1.735), (0.030,0.022,0.050), "skin", 12, 8), "Head"),
+            (sphere(side_name+"Eye", (side*0.075,-0.174,1.765), (0.052,0.018,0.064), "eye_white", 16, 10), "Head"),
+            (sphere(side_name+"Iris", (side*0.075,-0.190,1.762), (0.029,0.010,0.041), "iris", 16, 10), "Head"),
+            (sphere(side_name+"Pupil", (side*0.075,-0.198,1.758), (0.013,0.006,0.023), "hair", 12, 8), "Head"),
+            (sphere(side_name+"EyeHighlight", (side*0.065,-0.204,1.778), (0.008,0.004,0.010), "eye_white", 10, 6), "Head"),
+            (capsule(side_name+"Brow", (side*0.118,-0.191,1.835), (side*0.035,-0.195,1.842), 0.010, "hair", 8), "Head"),
         ]
+    parts.append((sphere("Nose", (0,-0.193,1.705), (0.018,0.012,0.026), "skin", 10, 6), "Head"))
     parts.append((capsule("Mouth", (-0.045,-0.187,1.65), (0.045,-0.187,1.65), 0.009, "mouth", 8), "Head"))
     parts.append((sphere("HairCap", (0,0.025,1.805), (0.218,0.19,0.215), "hair", 18, 10), "Head"))
+
+    # Layered forehead bangs make the face readable at gameplay distance.
+    bang_specs = [
+        (-0.130, -0.155, 1.815, -0.18),
+        (-0.065, -0.172, 1.805, -0.08),
+        (0.000, -0.180, 1.795, 0.00),
+        (0.065, -0.172, 1.805, 0.08),
+        (0.130, -0.155, 1.815, 0.18),
+    ]
+    for i, (x, y, z, roll) in enumerate(bang_specs):
+        parts.append((cone(f"HairBang{i}", (x,y,z), 0.016, 0.055, 0.22, "hair", (0.05,0.0,roll), 10), "Head"))
     spikes = [
         ((0,-0.11,1.96), (0.0,0.35,0.0)),
         ((-0.10,-0.08,1.94), (0.15,0.25,-0.25)),
@@ -167,7 +184,13 @@ def create_character(rig):
     for i,(loc,rot) in enumerate(spikes):
         parts.append((cone(f"HairSpike{i}", loc, 0.085, 0.018, 0.26, "hair", rot, 10), "Head"))
     parts.append((cube("Scarf", (0,-0.145,1.39), (0.22,0.06,0.08), "accent", 0.025), "UpperChest"))
+    parts.append((capsule("ScarfTail", (0.10,0.04,1.37), (0.25,0.30,1.20), 0.040, "accent", 10), "UpperChest"))
+    parts.append((cube("Belt", (0,-0.002,0.995), (0.38,0.145,0.035), "pants_dark", 0.012), "Hips"))
+    parts.append((cube("BeltBuckle", (0,-0.148,0.995), (0.052,0.022,0.048), "metal", 0.008), "Hips"))
     for side in (-1,1):
+        prefix = "Left" if side < 0 else "Right"
+        parts.append((sphere(prefix+"ShoulderGuard", (side*0.245,-0.005,1.395), (0.115,0.105,0.075), "coat", 14, 8), prefix+"UpperArm"))
+        parts.append((cube(prefix+"Cuff", (side*0.52,-0.005,1.08), (0.085,0.075,0.055), "pants_dark", 0.015), prefix+"LowerArm"))
         parts.append((cube("CoatTailL" if side<0 else "CoatTailR", (side*0.09,0.045,0.91), (0.14,0.07,0.30), "coat", 0.03), "Hips"))
     for obj in (
         capsule("SwordGrip", (0.61,-0.03,0.97), (0.61,-0.03,0.78), 0.026, "grip", 10),
