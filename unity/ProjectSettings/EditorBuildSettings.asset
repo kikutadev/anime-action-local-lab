@@ -6,7 +6,7 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Generated/AnimeActionDemo.unity
-    guid: 9642e1bccafa24c48996f3001f16766c
+    path: Assets/Generated/ModelQualityShowcase.unity
+    guid: b35317378cf094997b1332dc6c763b35
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0
