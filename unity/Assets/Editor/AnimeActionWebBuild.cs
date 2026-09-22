@@ -22,9 +22,9 @@ public static class AnimeActionWebBuild
         }
         Directory.CreateDirectory(output);
 
-        PlayerSettings.productName = "Anime Character Model Quality";
+        PlayerSettings.productName = "Anime Character Action Test";
         PlayerSettings.companyName = "kikutadev";
-        PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.WebGL, "dev.kikuta.animecharactermodelquality");
+        PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.WebGL, "dev.kikuta.animecharacteractiontest");
         PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
         PlayerSettings.WebGL.decompressionFallback = true;
         PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
@@ -61,7 +61,7 @@ public static class AnimeActionWebBuild
   <meta charset=""utf-8"">
   <meta name=""viewport"" content=""width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"">
   <meta name=""theme-color"" content=""#e0e6ee"">
-  <title>Anime Character Model Quality</title>
+  <title>Anime Character Action Test</title>
   <style>
     * { box-sizing: border-box; }
     html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #e0e6ee; }
@@ -92,7 +92,7 @@ public static class AnimeActionWebBuild
       codeUrl: 'Build/publish.wasm',
       streamingAssetsUrl: 'StreamingAssets',
       companyName: 'kikutadev',
-      productName: 'Anime Character Model Quality',
+      productName: 'Anime Character Action Test',
       productVersion: '1.0',
       devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       showBanner: (msg, type) => {

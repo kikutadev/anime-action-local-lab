@@ -1,68 +1,49 @@
 # Anime Action Local Lab
 
-M1 Max / 32GB 上で、既製キャラクターを主成果物にせず、ローカル生成したアニメ調人型キャラクターとモーションを Unity WebGL まで通す検証プロジェクト。
+高品質なアニメ調3Dキャラクターを Unity WebGL 上で実際に操作し、アクションゲームとして見た時のモデル・モーション・カメラ・操作感を短いサイクルで検証するプロジェクト。
 
-## Current state
+## Current direction
 
-- Blender/Python でアニメ調人型・骨格・剣を生成
-- キャラ外観を JSON spec で差し替え、共通骨格のまま別キャラを再生成
-- Blender 生成 FBX を Unity の操作キャラとして使用
-- HY-Motion 1.0 Lite を Apple Silicon / MPS で実行
-- Qwen3-8B + CLIP と motion DiT を段階ロードして 32 GB 内に収める
-- HY-Motion の SMPL-H 主要18トラックを Unity 骨格へリターゲット
-- 斬撃 45f / 回避 30f をローカル生成し、実ゲーム操作へ接続
-- 移動・カメラ・回避・敵への斬撃判定を実装
-- Unity 6.3 WebGL を GitHub Pages へデプロイ
-- ビルド前にモデル骨格・モーションクリップを acceptance validation
+ローカルAIによる人間モデル全生成は、TRELLIS.2 / AniGen-mac まで実機検証した結果、制作コストと出力品質が釣り合わないため本線から外した。
+
+現在は、見た目が既に成立している無料3Dキャラクターをベースにして、ゲーム側の品質を先に詰める。
+
+- VRoid公式 AvatarSample A / B / C を UniVRM でruntimeロード
+- Cを既定プレイヤーとして使用
+- A / B / C は実行中に切替可能
+- Humanoid骨を直接取得して軽量な歩行・攻撃・回避ポーズを生成
+- CharacterControllerによる移動・旋回
+- 三人称追従カメラ
+- 練習用ダミーと近接攻撃判定
+- PC: WASD / J / Space
+- Mobile: 左スティック / ATTACK / DODGE
+- Unity 6.3 WebGL
+- GitHub Pagesへデプロイ
 
 Preview:
 
 https://kikutadev.github.io/anime-action-local-lab/
 
-## Local rebuild
+## Fast iteration rule
 
-通常の再ビルドは次で、Blender モデル生成 → Unity Assets 反映 → acceptance → WebGL build まで実行する。
+速度を優先し、通常は次の順番で検証する。
 
-```bash
-./tools/rebuild_local.sh
-```
+1. Unity batchmodeでscene生成 + C# compileのみ
+2. エラーがなければWebGLを1回だけbuild
+3. headless Chrome / CDPで390x844を実操作
+4. 問題なければcommit / push / Pages確認
 
-別キャラ仕様で再生成する場合:
+重いAI生成やフルbuildを修正ごとに繰り返さない。
 
-```bash
-CHARACTER_SPEC=blender/specs/rose_duelist.json ./tools/rebuild_local.sh
-```
+## Assets
 
-HY-Motion の斬撃・回避まで再生成する場合:
+VRoid sample avatarsの出典・利用条件は `THIRD_PARTY_ASSETS.md` に記録している。
 
-```bash
-RUN_HYMOTION=1 ./tools/rebuild_local.sh
-```
+## Research retained
 
-主要環境変数:
+以下は本線ではないが、ローカル3D生成・モーション生成の検証結果として残す。
 
-- `BLENDER_BIN`: Blender executable
-- `UNITY_BIN`: Unity executable
-- `HYMOTION_ROOT`: external HY-Motion checkout
-- `CHARACTER_SPEC`: Blender character spec JSON; 既定は `blender/specs/vanguard.json`
-- `MOTION_PROMPT`: Text-to-Motion prompt
-- `MOTION_DURATION`: motion duration seconds
-- `MOTION_STEPS`: validation/inference steps
-- `MOTION_SEED`: attack seed
-- `DODGE_PROMPT`, `DODGE_DURATION`, `DODGE_SEED`: dodge generation
-- `TEXT_DEVICE`: `cpu` or `mps`; 32 GB Mac では staged loading のため `cpu` を既定
-
-## Structure
-
-- `blender/generate_anime_fighter.py`: 自前アニメ調キャラクター生成
-- `blender/specs/`: 色・目・髪・肩・コート丈などのキャラ仕様
-- `tools/hymotion_mps_generate.py`: Apple Silicon 向け staged Text-to-Motion
-- `tools/hymotion_to_unity.py`: HY-Motion 出力 → Unity runtime clip
-- `tools/patches/hymotion-mps.patch`: upstream HY-Motion の MPS 対応差分
-- `unity/`: Unity runtime/editor
-- `publish/`: ローカルで検証済みの GitHub Pages 配信物
-- `docs/HY_MOTION_MPS.md`: M1 Max 32 GB 実測
-
-## Design rule
-
-第三者の完成済みキャラクターを主成果物にはしない。フリーアセットは環境・VFX・補助用途には利用可能だが、キャラクター生成・骨格・モーション生成の技術検証がこの repo の中心。
+- TRELLIS.2 Apple Silicon移植検証
+- AniGen-mac: mesh + skeleton + skin weights生成
+- HY-Motion 1.0 Lite MPS検証
+- Blender/Python自前人型生成

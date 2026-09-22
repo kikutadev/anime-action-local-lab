@@ -20,17 +20,51 @@ public static class ModelQualityShowcaseSetup
         ModelQualityShowcase controller = stage.AddComponent<ModelQualityShowcase>();
         controller.defaultIndex = 2;
 
+        GameObject player = new("Player");
+        player.transform.SetParent(stage.transform, false);
+        player.transform.position = Vector3.zero;
+        CharacterController characterController = player.AddComponent<CharacterController>();
+        characterController.height = 1.8f;
+        characterController.radius = 0.30f;
+        characterController.center = new Vector3(0f, 0.9f, 0f);
+        VroidActionMotor motor = player.AddComponent<VroidActionMotor>();
+        controller.playerHost = player.transform;
+        controller.actionMotor = motor;
+
         Material floorMaterial = GetOrCreateMaterial(
             $"{MaterialDir}/NeutralFloor.mat",
             new Color(0.74f, 0.77f, 0.81f),
             0f,
             0.16f);
 
+        Material dummyMaterial = GetOrCreateMaterial(
+            $"{MaterialDir}/TrainingDummy.mat",
+            new Color(0.30f, 0.34f, 0.42f),
+            0f,
+            0.22f);
+
         GameObject floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
         floor.name = "NeutralFloor";
         floor.transform.position = Vector3.zero;
-        floor.transform.localScale = new Vector3(3.5f, 1f, 3.5f);
+        floor.transform.localScale = new Vector3(5.5f, 1f, 5.5f);
         floor.GetComponent<Renderer>().sharedMaterial = floorMaterial;
+
+        Vector3[] dummyPositions =
+        {
+            new Vector3(0f, 0.75f, 3.1f),
+            new Vector3(-2.4f, 0.75f, 4.2f),
+            new Vector3(2.4f, 0.75f, 4.2f),
+            new Vector3(0f, 0.75f, 6.2f),
+        };
+        for (int i = 0; i < dummyPositions.Length; i++)
+        {
+            GameObject dummy = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            dummy.name = $"TrainingDummy_{i + 1}";
+            dummy.transform.position = dummyPositions[i];
+            dummy.transform.localScale = new Vector3(0.72f, 1.0f, 0.72f);
+            dummy.GetComponent<Renderer>().sharedMaterial = dummyMaterial;
+            dummy.AddComponent<TrainingDummy>();
+        }
 
         RenderSettings.ambientMode = AmbientMode.Flat;
         RenderSettings.ambientLight = new Color(0.62f, 0.64f, 0.70f);
@@ -53,12 +87,14 @@ public static class ModelQualityShowcaseSetup
         cameraObject.tag = "MainCamera";
         camera.clearFlags = CameraClearFlags.SolidColor;
         camera.backgroundColor = new Color(0.88f, 0.91f, 0.95f);
-        camera.fieldOfView = 32f;
+        camera.fieldOfView = 48f;
         camera.nearClipPlane = 0.025f;
         camera.farClipPlane = 50f;
         camera.allowHDR = true;
         camera.allowMSAA = true;
         controller.viewCamera = camera;
+        motor.viewCamera = camera;
+        cameraObject.transform.position = new Vector3(0f, 1.8f, -4.2f);
 
         EditorSceneManager.SaveScene(scene, ScenePath);
         EditorBuildSettings.scenes = new[]

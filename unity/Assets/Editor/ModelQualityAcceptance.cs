@@ -38,9 +38,19 @@ public static class ModelQualityAcceptance
         ModelQualityShowcase controller =
             UnityEngine.Object.FindFirstObjectByType<ModelQualityShowcase>();
 
-        if (controller == null || controller.viewCamera == null)
+        if (controller == null || controller.viewCamera == null ||
+            controller.playerHost == null || controller.actionMotor == null)
         {
-            throw new InvalidOperationException("Model quality showcase is missing its controller or camera.");
+            throw new InvalidOperationException(
+                "Action showcase is missing controller, camera, player host, or action motor.");
+        }
+
+        TrainingDummy[] dummies = UnityEngine.Object.FindObjectsByType<TrainingDummy>(
+            FindObjectsSortMode.None);
+        if (dummies.Length < 4)
+        {
+            throw new InvalidOperationException(
+                $"Action showcase expected at least 4 training dummies, got {dummies.Length}.");
         }
 
         if (GameObject.Find("BlenderGeneratedHumanoid") != null ||

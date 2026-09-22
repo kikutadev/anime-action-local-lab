@@ -9,6 +9,8 @@ using VRM;
 public sealed class ModelQualityShowcase : MonoBehaviour
 {
     public Camera viewCamera;
+    public Transform playerHost;
+    public VroidActionMotor actionMotor;
     public int defaultIndex = 2;
     public string[] modelFiles =
     {
@@ -43,6 +45,7 @@ public sealed class ModelQualityShowcase : MonoBehaviour
 
     private void OnDestroy()
     {
+        actionMotor?.BindAvatar(null);
         if (currentInstance != null)
         {
             currentInstance.Dispose();
@@ -66,6 +69,7 @@ public sealed class ModelQualityShowcase : MonoBehaviour
 
         if (currentInstance != null)
         {
+            actionMotor?.BindAvatar(null);
             currentInstance.Dispose();
             currentInstance = null;
             currentRoot = null;
@@ -116,7 +120,7 @@ public sealed class ModelQualityShowcase : MonoBehaviour
             currentInstance = loaded;
             currentRoot = loaded.gameObject;
             currentRoot.name = Path.GetFileNameWithoutExtension(fileName);
-            currentRoot.transform.SetParent(transform, false);
+            currentRoot.transform.SetParent(playerHost != null ? playerHost : transform, false);
             currentRoot.transform.localPosition = Vector3.zero;
             currentRoot.transform.localRotation = Quaternion.identity;
             currentRoot.transform.localScale = Vector3.one;
@@ -124,7 +128,8 @@ public sealed class ModelQualityShowcase : MonoBehaviour
             loaded.ShowMeshes();
             loaded.EnableUpdateWhenOffscreen();
 
-            NormalizeAndFrame();
+            NormalizeForAction();
+            actionMotor?.BindAvatar(currentRoot);
             loading = false;
 
             int vertices = 0;
@@ -148,21 +153,23 @@ public sealed class ModelQualityShowcase : MonoBehaviour
         }
     }
 
-    private void NormalizeAndFrame()
+    private void NormalizeForAction()
     {
         if (currentRoot == null) return;
 
         Bounds bounds = CalculateBounds(currentRoot);
-        Vector3 shift = new(-bounds.center.x, -bounds.min.y, -bounds.center.z);
-        currentRoot.transform.position += shift;
+        Vector3 anchor = playerHost != null ? playerHost.position : transform.position;
+        currentRoot.transform.position += new Vector3(
+            anchor.x - bounds.center.x,
+            anchor.y - bounds.min.y,
+            anchor.z - bounds.center.z);
 
         bounds = CalculateBounds(currentRoot);
-        focus = bounds.center + Vector3.up * bounds.extents.y * 0.03f;
+        focus = bounds.center;
         fitDistance = CalculateFitDistance(bounds);
         distance = fitDistance;
         yaw = 0f;
         pitch = 3f;
-        UpdateCamera();
     }
 
     private Bounds CalculateBounds(GameObject root)
@@ -204,15 +211,18 @@ public sealed class ModelQualityShowcase : MonoBehaviour
     private void Update()
     {
         HandleKeyboard();
-        HandleMouse();
-        HandleTouch();
-        UpdateCamera();
+
+        // Keep the original orbit viewer available when no gameplay motor is bound.
+        if (actionMotor == null)
+        {
+            HandleMouse();
+            HandleTouch();
+            UpdateCamera();
+        }
     }
 
     private void HandleKeyboard()
     {
-        if (Input.GetKeyDown(KeyCode.LeftArrow)) Select(currentIndex - 1);
-        if (Input.GetKeyDown(KeyCode.RightArrow)) Select(currentIndex + 1);
         if (Input.GetKeyDown(KeyCode.Alpha1)) Select(0);
         if (Input.GetKeyDown(KeyCode.Alpha2)) Select(1);
         if (Input.GetKeyDown(KeyCode.Alpha3)) Select(2);
@@ -327,15 +337,16 @@ public sealed class ModelQualityShowcase : MonoBehaviour
 
         string sub = loading
             ? "読み込み中…"
-            : errorMessage ?? "ドラッグ/スワイプ: 回転　ホイール/ピンチ: ズーム";
+            : errorMessage ?? "移動: WASD / 左スティック　攻撃: J　回避: Space";
         GUI.Label(
             new Rect(safe.x + margin, safe.y + 39f * scale, safe.width - margin * 2f, 24f * scale),
             sub,
             hint);
 
-        float gap = 8f * scale;
-        float w = (safe.width - margin * 2f - gap * 2f) / 3f;
-        float y = safe.yMax - 62f * scale - margin;
+        float gap = 6f * scale;
+        float w = 42f * scale;
+        float y = safe.y + 12f * scale;
+        float x0 = safe.xMax - margin - (w * 3f + gap * 2f);
 
         for (int i = 0; i < 3; i++)
         {
@@ -345,7 +356,7 @@ public sealed class ModelQualityShowcase : MonoBehaviour
                 : Color.white;
 
             if (GUI.Button(
-                new Rect(safe.x + margin + i * (w + gap), y, w, 48f * scale),
+                new Rect(x0 + i * (w + gap), y, w, 34f * scale),
                 ((char)('A' + i)).ToString(),
                 button))
             {
