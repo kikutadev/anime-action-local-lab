@@ -11,7 +11,9 @@
 - VRoid公式 AvatarSample A / B / C を UniVRM でruntimeロード
 - Cを既定プレイヤーとして使用
 - A / B / C は実行中に切替可能
-- Humanoid骨を直接取得して軽量な歩行・攻撃・回避ポーズを生成
+- Humanoid骨を直接取得して軽量な歩行を生成
+- HY-Motion 1.0 Liteの既存slash / dodgeを18 Humanoid trackへ差分リターゲット
+- Foot / Toes基準＋床Raycastで見た目の足裏接地を補正
 - CharacterControllerによる移動・旋回
 - 三人称追従カメラ
 - 練習用ダミーと近接攻撃判定

@@ -1,9 +1,41 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
 [RequireComponent(typeof(CharacterController))]
 public sealed class VroidActionMotor : MonoBehaviour
 {
+    [Serializable]
+    private sealed class MotionClipData
+    {
+        public int fps;
+        public int frameCount;
+        public float duration;
+        public MotionBoneData[] bones;
+    }
+
+    [Serializable]
+    private sealed class MotionBoneData
+    {
+        public string name;
+        public float[] rotation;
+    }
+
+    private sealed class MotionTrack
+    {
+        public HumanBodyBones bone;
+        public Quaternion[] deltaRotations;
+    }
+
+    private sealed class RuntimeMotion
+    {
+        public int fps;
+        public int frameCount;
+        public List<MotionTrack> tracks;
+    }
+
+    private const float AttackDuration = 0.68f;
+    private const float DodgeDuration = 0.46f;
     public Camera viewCamera;
     public float moveSpeed = 4.6f;
     public float turnSharpness = 14f;
@@ -16,7 +48,11 @@ public sealed class VroidActionMotor : MonoBehaviour
     private Transform avatarRoot;
     private readonly Dictionary<HumanBodyBones, Transform> bones = new();
     private readonly Dictionary<Transform, Quaternion> baseRelativeRotations = new();
+    private readonly Dictionary<Transform, Quaternion> baseLocalRotations = new();
     private readonly Dictionary<Transform, Vector3> baseLocalPositions = new();
+
+    private RuntimeMotion slashMotion;
+    private RuntimeMotion dodgeMotion;
 
     private Vector3 avatarBaseLocalPosition;
     private float referenceFootHeight;
@@ -50,7 +86,10 @@ public sealed class VroidActionMotor : MonoBehaviour
         animator = root != null ? root.GetComponentInChildren<Animator>(true) : null;
         bones.Clear();
         baseRelativeRotations.Clear();
+        baseLocalRotations.Clear();
         baseLocalPositions.Clear();
+        slashMotion = null;
+        dodgeMotion = null;
         hasFootReference = false;
         groundError = 0f;
 
@@ -66,11 +105,14 @@ public sealed class VroidActionMotor : MonoBehaviour
             HumanBodyBones.Spine,
             HumanBodyBones.Chest,
             HumanBodyBones.UpperChest,
+            HumanBodyBones.Neck,
             HumanBodyBones.Head,
             HumanBodyBones.LeftUpperArm,
             HumanBodyBones.RightUpperArm,
             HumanBodyBones.LeftLowerArm,
             HumanBodyBones.RightLowerArm,
+            HumanBodyBones.LeftHand,
+            HumanBodyBones.RightHand,
             HumanBodyBones.LeftUpperLeg,
             HumanBodyBones.RightUpperLeg,
             HumanBodyBones.LeftLowerLeg,
@@ -87,6 +129,7 @@ public sealed class VroidActionMotor : MonoBehaviour
             if (t == null) continue;
             bones[bone] = t;
             baseRelativeRotations[t] = Quaternion.Inverse(transform.rotation) * t.rotation;
+            baseLocalRotations[t] = t.localRotation;
             baseLocalPositions[t] = t.localPosition;
         }
 
@@ -100,6 +143,8 @@ public sealed class VroidActionMotor : MonoBehaviour
         }
 
         FitCharacterControllerToAvatar(root);
+        slashMotion = LoadMotion("HYMotionSlash");
+        dodgeMotion = LoadMotion("HYMotionDodge");
 
         Debug.Log(
             $"VRoid action motor bound humanoid: {bones.Count} tracked bones, " +
@@ -195,7 +240,7 @@ public sealed class VroidActionMotor : MonoBehaviour
     private void TryAttack()
     {
         if (!Ready || IsAttacking || IsDodging) return;
-        attackTime = 0.52f;
+        attackTime = AttackDuration;
         Invoke(nameof(ResolveAttack), 0.27f);
     }
 
@@ -216,7 +261,7 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (!Ready || IsAttacking || IsDodging) return;
         Vector3 move = CameraRelative(input);
         dodgeDirection = move.sqrMagnitude > 0.05f ? move.normalized : transform.forward;
-        dodgeTime = 0.34f;
+        dodgeTime = DodgeDuration;
     }
 
     private Vector3 CameraRelative(Vector2 input)
@@ -234,10 +279,10 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private void ApplyProceduralPose(float moveAmount)
     {
-        foreach ((Transform t, Quaternion relative) in baseRelativeRotations)
+        foreach ((Transform t, Quaternion localRotation) in baseLocalRotations)
         {
             if (t == null) continue;
-            t.rotation = transform.rotation * relative;
+            t.localRotation = localRotation;
             if (baseLocalPositions.TryGetValue(t, out Vector3 localPosition))
             {
                 t.localPosition = localPosition;
@@ -246,28 +291,35 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         if (IsDodging)
         {
-            float u = 1f - dodgeTime / 0.34f;
-            float crouch = Mathf.Sin(Mathf.Clamp01(u) * Mathf.PI);
-            Rotate(HumanBodyBones.Spine, Vector3.right, 22f * crouch);
-            Rotate(HumanBodyBones.Chest, Vector3.right, 15f * crouch);
-            Rotate(HumanBodyBones.LeftUpperArm, Vector3.right, -28f * crouch);
-            Rotate(HumanBodyBones.RightUpperArm, Vector3.right, -28f * crouch);
+            float u = Mathf.Clamp01(1f - dodgeTime / DodgeDuration);
+            if (dodgeMotion != null)
+            {
+                ApplyGeneratedMotion(dodgeMotion, u, false);
+            }
+            else
+            {
+                float crouch = Mathf.Sin(u * Mathf.PI);
+                Rotate(HumanBodyBones.Spine, Vector3.right, 22f * crouch);
+                Rotate(HumanBodyBones.Chest, Vector3.right, 15f * crouch);
+            }
             return;
         }
 
         if (IsAttacking)
         {
-            float u = Mathf.Clamp01(1f - attackTime / 0.52f);
-            float slash = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - 0.18f) / 0.55f));
-            float recover = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - 0.75f) / 0.25f));
-            float amount = Mathf.Lerp(slash, 0f, recover);
-
-            Rotate(HumanBodyBones.Chest, Vector3.up, Mathf.Lerp(-18f, 32f, amount));
-            Rotate(HumanBodyBones.Spine, Vector3.up, Mathf.Lerp(-8f, 14f, amount));
-            Rotate(HumanBodyBones.RightUpperArm, Vector3.up, Mathf.Lerp(-65f, 55f, amount));
-            Rotate(HumanBodyBones.RightUpperArm, Vector3.right, -52f * Mathf.Sin(u * Mathf.PI));
-            Rotate(HumanBodyBones.RightLowerArm, Vector3.right, -42f * Mathf.Sin(u * Mathf.PI));
-            Rotate(HumanBodyBones.LeftUpperArm, Vector3.right, 18f * Mathf.Sin(u * Mathf.PI));
+            float u = Mathf.Clamp01(1f - attackTime / AttackDuration);
+            if (slashMotion != null)
+            {
+                ApplyGeneratedMotion(slashMotion, u, true);
+            }
+            else
+            {
+                float slash = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - 0.18f) / 0.55f));
+                float recover = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - 0.75f) / 0.25f));
+                float amount = Mathf.Lerp(slash, 0f, recover);
+                Rotate(HumanBodyBones.Chest, Vector3.up, Mathf.Lerp(-18f, 32f, amount));
+                Rotate(HumanBodyBones.RightUpperArm, Vector3.right, -52f * Mathf.Sin(u * Mathf.PI));
+            }
             return;
         }
 
@@ -285,6 +337,142 @@ public sealed class VroidActionMotor : MonoBehaviour
             Rotate(HumanBodyBones.Spine, Vector3.up, -bodyCounter);
             Rotate(HumanBodyBones.Chest, Vector3.up, bodyCounter * 0.65f);
         }
+    }
+
+    private RuntimeMotion LoadMotion(string resourceName)
+    {
+        TextAsset asset = Resources.Load<TextAsset>(resourceName);
+        if (asset == null) return null;
+
+        MotionClipData data = JsonUtility.FromJson<MotionClipData>(asset.text);
+        if (data == null || data.frameCount < 2 || data.fps <= 0 || data.bones == null)
+        {
+            Debug.LogWarning($"Invalid humanoid motion resource: {resourceName}");
+            return null;
+        }
+
+        List<MotionTrack> tracks = new();
+        foreach (MotionBoneData source in data.bones)
+        {
+            if (!Enum.TryParse(source.name, out HumanBodyBones bone) ||
+                !bones.ContainsKey(bone) ||
+                source.rotation == null ||
+                source.rotation.Length < 8)
+            {
+                continue;
+            }
+
+            int frames = source.rotation.Length / 4;
+            Quaternion[] raw = new Quaternion[frames];
+            for (int frame = 0; frame < frames; frame++)
+            {
+                int i = frame * 4;
+                raw[frame] = NormalizeQuaternion(new Quaternion(
+                    source.rotation[i],
+                    source.rotation[i + 1],
+                    source.rotation[i + 2],
+                    source.rotation[i + 3]));
+            }
+
+            Quaternion inverseStart = Quaternion.Inverse(raw[0]);
+            Quaternion[] deltas = new Quaternion[frames];
+            for (int frame = 0; frame < frames; frame++)
+            {
+                deltas[frame] = NormalizeQuaternion(inverseStart * raw[frame]);
+            }
+
+            tracks.Add(new MotionTrack
+            {
+                bone = bone,
+                deltaRotations = deltas,
+            });
+        }
+
+        if (tracks.Count == 0) return null;
+
+        Debug.Log(
+            $"Bound generated humanoid motion {resourceName}: " +
+            $"{data.frameCount}f @ {data.fps}fps, {tracks.Count} tracks.");
+
+        return new RuntimeMotion
+        {
+            fps = data.fps,
+            frameCount = data.frameCount,
+            tracks = tracks,
+        };
+    }
+
+    private void ApplyGeneratedMotion(RuntimeMotion motion, float normalizedTime, bool attack)
+    {
+        if (motion == null || motion.frameCount < 2) return;
+
+        float frame = Mathf.Clamp01(normalizedTime) * (motion.frameCount - 1);
+        int a = Mathf.FloorToInt(frame);
+        int b = Mathf.Min(a + 1, motion.frameCount - 1);
+        float t = frame - a;
+
+        float envelope = normalizedTime < 0.86f
+            ? 1f
+            : Mathf.Clamp01((1f - normalizedTime) / 0.14f);
+
+        foreach (MotionTrack track in motion.tracks)
+        {
+            if (!bones.TryGetValue(track.bone, out Transform target) ||
+                target == null ||
+                !baseLocalRotations.TryGetValue(target, out Quaternion rest))
+            {
+                continue;
+            }
+
+            int ta = Mathf.Min(a, track.deltaRotations.Length - 1);
+            int tb = Mathf.Min(b, track.deltaRotations.Length - 1);
+            Quaternion delta = Quaternion.Slerp(
+                track.deltaRotations[ta],
+                track.deltaRotations[tb],
+                t);
+
+            float anatomicalWeight = attack
+                ? GetAttackRetargetWeight(track.bone)
+                : 1f;
+            delta = Quaternion.Slerp(
+                Quaternion.identity,
+                delta,
+                envelope * anatomicalWeight);
+            target.localRotation = rest * delta;
+        }
+    }
+
+    private static float GetAttackRetargetWeight(HumanBodyBones bone)
+    {
+        return bone switch
+        {
+            // HY-Motion slash contains an almost 180-degree pelvis spin.
+            // Keep gameplay facing controlled by the CharacterController and
+            // retain only a small amount of pelvic torque.
+            HumanBodyBones.Hips => 0.14f,
+
+            HumanBodyBones.LeftUpperLeg or
+            HumanBodyBones.RightUpperLeg => 0.58f,
+
+            HumanBodyBones.LeftLowerLeg or
+            HumanBodyBones.RightLowerLeg or
+            HumanBodyBones.LeftFoot or
+            HumanBodyBones.RightFoot => 0.52f,
+
+            HumanBodyBones.Neck or
+            HumanBodyBones.Head => 0.70f,
+
+            _ => 1f,
+        };
+    }
+
+    private static Quaternion NormalizeQuaternion(Quaternion q)
+    {
+        float magnitude = Mathf.Sqrt(
+            q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+        return magnitude > 1e-6f
+            ? new Quaternion(q.x / magnitude, q.y / magnitude, q.z / magnitude, q.w / magnitude)
+            : Quaternion.identity;
     }
 
     private void CorrectVisualGrounding()
