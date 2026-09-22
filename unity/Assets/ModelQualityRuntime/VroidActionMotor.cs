@@ -37,6 +37,8 @@ public sealed class VroidActionMotor : MonoBehaviour
     private const float AttackDuration = 0.68f;
     private const float DodgeDuration = 0.46f;
     public Camera viewCamera;
+    public Transform weaponVisual;
+    public TrailRenderer weaponTrail;
     public float moveSpeed = 4.6f;
     public float turnSharpness = 14f;
     public float cameraDistance = 4.2f;
@@ -84,6 +86,10 @@ public sealed class VroidActionMotor : MonoBehaviour
     {
         avatarRoot = root != null ? root.transform : null;
         animator = root != null ? root.GetComponentInChildren<Animator>(true) : null;
+        if (weaponVisual != null)
+        {
+            weaponVisual.gameObject.SetActive(root != null);
+        }
         bones.Clear();
         baseRelativeRotations.Clear();
         baseLocalRotations.Clear();
@@ -212,6 +218,11 @@ public sealed class VroidActionMotor : MonoBehaviour
     private void LateUpdate()
     {
         CorrectVisualGrounding();
+        UpdateWeaponPose();
+        if (weaponTrail != null)
+        {
+            weaponTrail.emitting = Ready && IsAttacking;
+        }
 
         if (viewCamera == null) return;
 
@@ -473,6 +484,41 @@ public sealed class VroidActionMotor : MonoBehaviour
         return magnitude > 1e-6f
             ? new Quaternion(q.x / magnitude, q.y / magnitude, q.z / magnitude, q.w / magnitude)
             : Quaternion.identity;
+    }
+
+    private void UpdateWeaponPose()
+    {
+        if (weaponVisual == null) return;
+
+        if (!Ready ||
+            !bones.TryGetValue(HumanBodyBones.RightHand, out Transform hand) ||
+            !bones.TryGetValue(HumanBodyBones.RightLowerArm, out Transform lowerArm) ||
+            hand == null ||
+            lowerArm == null)
+        {
+            weaponVisual.gameObject.SetActive(false);
+            return;
+        }
+
+        weaponVisual.gameObject.SetActive(true);
+
+        Vector3 forward = hand.position - lowerArm.position;
+        if (forward.sqrMagnitude < 1e-6f)
+        {
+            forward = transform.forward;
+        }
+        forward.Normalize();
+
+        Vector3 up = Vector3.ProjectOnPlane(Vector3.up, forward);
+        if (up.sqrMagnitude < 1e-5f)
+        {
+            up = Vector3.ProjectOnPlane(transform.right, forward);
+        }
+        up.Normalize();
+
+        weaponVisual.SetPositionAndRotation(
+            hand.position + forward * 0.055f,
+            Quaternion.LookRotation(forward, up));
     }
 
     private void CorrectVisualGrounding()

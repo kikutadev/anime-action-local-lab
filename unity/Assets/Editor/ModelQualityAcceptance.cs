@@ -39,10 +39,12 @@ public static class ModelQualityAcceptance
             UnityEngine.Object.FindFirstObjectByType<ModelQualityShowcase>();
 
         if (controller == null || controller.viewCamera == null ||
-            controller.playerHost == null || controller.actionMotor == null)
+            controller.playerHost == null || controller.actionMotor == null ||
+            controller.actionMotor.weaponVisual == null ||
+            controller.actionMotor.weaponTrail == null)
         {
             throw new InvalidOperationException(
-                "Action showcase is missing controller, camera, player host, or action motor.");
+                "Action showcase is missing controller, camera, player host, action motor, sword, or trail.");
         }
 
         TrainingDummy[] dummies = UnityEngine.Object.FindObjectsByType<TrainingDummy>(
