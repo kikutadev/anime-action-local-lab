@@ -16,6 +16,13 @@ public sealed class VroidActionMotor : MonoBehaviour
     private Transform avatarRoot;
     private readonly Dictionary<HumanBodyBones, Transform> bones = new();
     private readonly Dictionary<Transform, Quaternion> baseRelativeRotations = new();
+    private readonly Dictionary<Transform, Vector3> baseLocalPositions = new();
+
+    private Vector3 avatarBaseLocalPosition;
+    private float referenceFootHeight;
+    private float groundError;
+    private float lastGroundY;
+    private bool hasFootReference;
 
     private float verticalVelocity;
     private float attackTime;
@@ -43,6 +50,9 @@ public sealed class VroidActionMotor : MonoBehaviour
         animator = root != null ? root.GetComponentInChildren<Animator>(true) : null;
         bones.Clear();
         baseRelativeRotations.Clear();
+        baseLocalPositions.Clear();
+        hasFootReference = false;
+        groundError = 0f;
 
         if (animator == null || !animator.isHuman)
         {
@@ -65,6 +75,10 @@ public sealed class VroidActionMotor : MonoBehaviour
             HumanBodyBones.RightUpperLeg,
             HumanBodyBones.LeftLowerLeg,
             HumanBodyBones.RightLowerLeg,
+            HumanBodyBones.LeftFoot,
+            HumanBodyBones.RightFoot,
+            HumanBodyBones.LeftToes,
+            HumanBodyBones.RightToes,
         };
 
         foreach (HumanBodyBones bone in wanted)
@@ -73,9 +87,23 @@ public sealed class VroidActionMotor : MonoBehaviour
             if (t == null) continue;
             bones[bone] = t;
             baseRelativeRotations[t] = Quaternion.Inverse(transform.rotation) * t.rotation;
+            baseLocalPositions[t] = t.localPosition;
         }
 
-        Debug.Log($"VRoid action motor bound humanoid: {bones.Count} tracked bones.");
+        avatarBaseLocalPosition = avatarRoot.localPosition;
+        if (TryGetLowestFootWorldY(out float footY))
+        {
+            Bounds visibleBounds = CalculateVisibleBounds(root);
+            referenceFootHeight = footY - visibleBounds.min.y;
+            lastGroundY = visibleBounds.min.y;
+            hasFootReference = true;
+        }
+
+        FitCharacterControllerToAvatar(root);
+
+        Debug.Log(
+            $"VRoid action motor bound humanoid: {bones.Count} tracked bones, " +
+            $"footReference={referenceFootHeight:F4}, controllerHeight={controller.height:F3}.");
     }
 
     private void Update()
@@ -96,6 +124,10 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.K))
         {
             TryDodge(input);
+        }
+        if (Input.GetKeyDown(KeyCode.G))
+        {
+            LogGrounding();
         }
 
         Vector3 desired = CameraRelative(input);
@@ -134,6 +166,8 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private void LateUpdate()
     {
+        CorrectVisualGrounding();
+
         if (viewCamera == null) return;
 
         Vector3 desired = transform.position
@@ -202,13 +236,12 @@ public sealed class VroidActionMotor : MonoBehaviour
     {
         foreach ((Transform t, Quaternion relative) in baseRelativeRotations)
         {
-            if (t != null) t.rotation = transform.rotation * relative;
-        }
-
-        if (bones.TryGetValue(HumanBodyBones.Hips, out Transform hips))
-        {
-            float bob = moveAmount > 0.05f ? Mathf.Abs(Mathf.Sin(walkClock)) * 0.018f : 0f;
-            hips.position += Vector3.up * bob;
+            if (t == null) continue;
+            t.rotation = transform.rotation * relative;
+            if (baseLocalPositions.TryGetValue(t, out Vector3 localPosition))
+            {
+                t.localPosition = localPosition;
+            }
         }
 
         if (IsDodging)
@@ -245,9 +278,132 @@ public sealed class VroidActionMotor : MonoBehaviour
             Rotate(HumanBodyBones.RightUpperLeg, Vector3.right, -swing);
             Rotate(HumanBodyBones.LeftUpperArm, Vector3.right, -swing * 0.72f);
             Rotate(HumanBodyBones.RightUpperArm, Vector3.right, swing * 0.72f);
-            Rotate(HumanBodyBones.LeftLowerLeg, Vector3.right, Mathf.Max(0f, -swing) * 0.62f);
-            Rotate(HumanBodyBones.RightLowerLeg, Vector3.right, Mathf.Max(0f, swing) * 0.62f);
+            Rotate(HumanBodyBones.LeftLowerLeg, Vector3.right, Mathf.Max(0f, -swing) * 0.72f);
+            Rotate(HumanBodyBones.RightLowerLeg, Vector3.right, Mathf.Max(0f, swing) * 0.72f);
+
+            float bodyCounter = Mathf.Sin(walkClock) * 3.2f * moveAmount;
+            Rotate(HumanBodyBones.Spine, Vector3.up, -bodyCounter);
+            Rotate(HumanBodyBones.Chest, Vector3.up, bodyCounter * 0.65f);
         }
+    }
+
+    private void CorrectVisualGrounding()
+    {
+        if (!Ready || avatarRoot == null || !hasFootReference) return;
+        if (!TryGetLowestFootWorldY(out float footY)) return;
+
+        lastGroundY = ResolveGroundY();
+        float targetFootY = lastGroundY + referenceFootHeight;
+        groundError = targetFootY - footY;
+
+        Vector3 local = avatarRoot.localPosition;
+        float desiredLocalY = Mathf.Clamp(
+            local.y + groundError,
+            avatarBaseLocalPosition.y - 0.16f,
+            avatarBaseLocalPosition.y + 0.16f);
+
+        float snap = 1f - Mathf.Exp(-28f * Time.deltaTime);
+        local.y = Mathf.Lerp(local.y, desiredLocalY, snap);
+        avatarRoot.localPosition = local;
+    }
+
+    private float ResolveGroundY()
+    {
+        Vector3 origin = transform.position + Vector3.up * 0.65f;
+        if (Physics.Raycast(
+            origin,
+            Vector3.down,
+            out RaycastHit hit,
+            2.0f,
+            ~0,
+            QueryTriggerInteraction.Ignore))
+        {
+            return hit.point.y;
+        }
+
+        return transform.position.y - controller.skinWidth;
+    }
+
+    private Bounds CalculateVisibleBounds(GameObject root)
+    {
+        Renderer[] renderers = root.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length == 0)
+        {
+            return new Bounds(root.transform.position + Vector3.up, Vector3.one * 2f);
+        }
+
+        bool hasBounds = false;
+        Bounds bounds = default;
+        foreach (Renderer renderer in renderers)
+        {
+            if (!renderer.enabled) continue;
+            if (!hasBounds)
+            {
+                bounds = renderer.bounds;
+                hasBounds = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+
+        return hasBounds
+            ? bounds
+            : new Bounds(root.transform.position + Vector3.up, Vector3.one * 2f);
+    }
+
+    private bool TryGetLowestFootWorldY(out float y)
+    {
+        y = float.PositiveInfinity;
+        bool found = false;
+        HumanBodyBones[] contacts =
+        {
+            HumanBodyBones.LeftFoot,
+            HumanBodyBones.RightFoot,
+            HumanBodyBones.LeftToes,
+            HumanBodyBones.RightToes,
+        };
+
+        foreach (HumanBodyBones bone in contacts)
+        {
+            if (!bones.TryGetValue(bone, out Transform t) || t == null) continue;
+            y = Mathf.Min(y, t.position.y);
+            found = true;
+        }
+        return found;
+    }
+
+    private void FitCharacterControllerToAvatar(GameObject root)
+    {
+        Bounds bounds = CalculateVisibleBounds(root);
+        float height = Mathf.Clamp(bounds.size.y * 0.96f, 1.20f, 2.20f);
+        controller.height = height;
+        controller.center = new Vector3(0f, height * 0.5f, 0f);
+        controller.radius = Mathf.Clamp(height * 0.17f, 0.24f, 0.36f);
+        controller.skinWidth = 0.04f;
+        controller.stepOffset = Mathf.Min(0.28f, height * 0.16f);
+    }
+
+    public void LogGrounding()
+    {
+        float left = GetFootHeight(HumanBodyBones.LeftFoot);
+        float right = GetFootHeight(HumanBodyBones.RightFoot);
+        float leftToe = GetFootHeight(HumanBodyBones.LeftToes);
+        float rightToe = GetFootHeight(HumanBodyBones.RightToes);
+        TryGetLowestFootWorldY(out float minFootWorldY);
+        float estimatedSoleY = minFootWorldY - referenceFootHeight;
+        float soleGap = estimatedSoleY - lastGroundY;
+        Debug.Log(
+            $"GROUNDING groundY={lastGroundY:F4} soleGap={soleGap:F4} ref={referenceFootHeight:F4} " +
+            $"err={groundError:F4} LF={left:F4} RF={right:F4} LT={leftToe:F4} RT={rightToe:F4} " +
+            $"hostY={transform.position.y:F4} rootLocalY={(avatarRoot != null ? avatarRoot.localPosition.y : 0f):F4}");
+    }
+
+    private float GetFootHeight(HumanBodyBones bone)
+    {
+        if (!bones.TryGetValue(bone, out Transform t) || t == null) return float.NaN;
+        return t.position.y - transform.position.y;
     }
 
     private void Rotate(HumanBodyBones bone, Vector3 localAxis, float degrees)
