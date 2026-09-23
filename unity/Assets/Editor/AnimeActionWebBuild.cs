@@ -83,6 +83,7 @@ public static class AnimeActionWebBuild
   <div id=""warning""></div>
   <script>
     const canvas = document.getElementById('unity-canvas');
+    canvas.addEventListener('contextmenu', event => event.preventDefault());
     const loading = document.getElementById('loading');
     const fill = document.getElementById('loading-fill');
     const warning = document.getElementById('warning');

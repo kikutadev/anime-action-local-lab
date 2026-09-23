@@ -11,6 +11,7 @@ public sealed class VroidActionMotor : MonoBehaviour
         public int fps;
         public int frameCount;
         public float duration;
+        public float[] rootTranslation;
         public MotionBoneData[] bones;
     }
 
@@ -31,23 +32,37 @@ public sealed class VroidActionMotor : MonoBehaviour
     {
         public int fps;
         public int frameCount;
+        public float duration;
+        public float[] rootProgress;
         public List<MotionTrack> tracks;
     }
 
-    private const float AttackDuration = 0.68f;
-    private const float DodgeDuration = 0.46f;
+    public const float UalWalkSpeed = 1.55f;
+    public const float UalJogSpeed = 3.10f;
+    public const float UalRunSpeed = 5.20f;
+    private const float FallbackAttackDuration = 0.68f;
+    private const float FallbackDodgeDuration = 0.46f;
     private static readonly int MoveSpeedHash = Animator.StringToHash("MoveSpeed");
     public Camera viewCamera;
     public Transform weaponVisual;
     public TrailRenderer weaponTrail;
-    public float moveSpeed = 2.35f;
-    public float turnSharpness = 14f;
-    public float naturalWalkSpeed = 1.45f;
-    public float naturalJogSpeed = 2.50f;
+    public float moveSpeed = UalRunSpeed;
+    public float acceleration = 30f;
+    public float deceleration = 38f;
+    public float turnSharpness = 20f;
+    public float naturalWalkSpeed = UalWalkSpeed;
+    public float naturalJogSpeed = UalJogSpeed;
+    public float naturalRunSpeed = UalRunSpeed;
     public float cameraDistance = 4.2f;
-    public float cameraHeight = 1.8f;
+    public float cameraMinDistance = 2.2f;
+    public float cameraMaxDistance = 6.2f;
     public float cameraLookHeight = 1.05f;
+    public float cameraPitch = 13f;
+    public float mouseCameraSensitivity = 0.18f;
+    public float touchCameraSensitivity = 0.13f;
     public float swordUpperBodyWeight = 0.85f;
+    [Range(0.05f, 0.95f)]
+    public float attackHitPhase = 0.42f;
     public Vector3 weaponHandLocalPosition = Vector3.zero;
     public Vector3 weaponHandLocalEuler = Vector3.zero;
     public Vector3 weaponIdleLocalEuler = new(0f, 0f, -90f);
@@ -69,16 +84,27 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private float verticalVelocity;
     private float locomotionVisualAmount;
+    private float currentPlanarSpeed;
+    private Vector3 planarVelocity;
     private float attackTime;
     private float dodgeTime;
+    private float actionRootDistance;
+    private bool attackHitResolved;
     private Vector3 dodgeDirection;
 
     private int joystickFinger = -1;
-    private Vector2 joystickOrigin;
     private Vector2 joystickCurrent;
     private Vector2 touchMove;
+    private int cameraFinger = -1;
+    private Vector2 cameraLastTouch;
+    private bool mouseCameraDragging;
+    private Vector2 mouseCameraLast;
+    private float cameraYaw;
+    private bool cameraInitialized;
 
     private bool qaMode;
+    private string qaMotion;
+    private float qaPhase;
     private float qaCameraYaw;
 
     public bool Ready => animator != null;
@@ -104,6 +130,13 @@ public sealed class VroidActionMotor : MonoBehaviour
         dodgeMotion = null;
         hasFootReference = false;
         groundError = 0f;
+        planarVelocity = Vector3.zero;
+        currentPlanarSpeed = 0f;
+        if (!cameraInitialized)
+        {
+            cameraYaw = transform.eulerAngles.y;
+            cameraInitialized = true;
+        }
 
         if (animator == null || !animator.isHuman)
         {
@@ -194,16 +227,13 @@ public sealed class VroidActionMotor : MonoBehaviour
             return;
         }
 
-        attackTime = Mathf.Max(0f, attackTime - Time.deltaTime);
-        dodgeTime = Mathf.Max(0f, dodgeTime - Time.deltaTime);
-        HandleTouchJoystick();
+        HandlePointerControls();
 
         Vector2 keyboard = new(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
         Vector2 input = keyboard.sqrMagnitude > 0.01f ? keyboard : touchMove;
-        input = Vector2.ClampMagnitude(input, 1f);
+        input = ApplyStickDeadZone(Vector2.ClampMagnitude(input, 1f), 0.10f);
 
-        if (Input.GetKeyDown(KeyCode.J) ||
-            (Input.touchCount == 0 && Input.GetMouseButtonDown(0)))
+        if (Input.GetKeyDown(KeyCode.J))
         {
             TryAttack();
         }
@@ -216,33 +246,46 @@ public sealed class VroidActionMotor : MonoBehaviour
             LogGrounding();
         }
 
-        Vector3 desired = CameraRelative(input);
-        float moveAmount = Mathf.Clamp01(desired.magnitude);
-        bool wantsMove = moveAmount > 0.05f;
+        Vector3 inputDirection = CameraRelative(input);
+        float moveAmount = Mathf.Clamp01(inputDirection.magnitude);
+        bool wantsMove = moveAmount > 0.01f;
+        bool actionWasActive = IsAttacking || IsDodging;
 
-        if (IsDodging)
+        Vector3 horizontalDisplacement = Vector3.zero;
+        if (actionWasActive)
         {
-            desired = dodgeDirection * 9.5f;
+            planarVelocity = Vector3.zero;
+            horizontalDisplacement = AdvanceActionMotion(Time.deltaTime);
+            currentPlanarSpeed = Time.deltaTime > 1e-5f
+                ? horizontalDisplacement.magnitude / Time.deltaTime
+                : 0f;
         }
-        else if (wantsMove)
+        else
         {
-            desired = desired.normalized * moveSpeed;
-            if (!IsAttacking)
+            Vector3 desiredVelocity = wantsMove
+                ? inputDirection.normalized * (moveAmount * moveSpeed)
+                : Vector3.zero;
+            float rate = wantsMove ? acceleration : deceleration;
+            planarVelocity = Vector3.MoveTowards(
+                planarVelocity,
+                desiredVelocity,
+                Mathf.Max(1f, rate) * Time.deltaTime);
+            currentPlanarSpeed = planarVelocity.magnitude;
+            horizontalDisplacement = planarVelocity * Time.deltaTime;
+
+            if (currentPlanarSpeed > 0.08f)
             {
-                Quaternion target = Quaternion.LookRotation(desired.normalized, Vector3.up);
+                Quaternion target = Quaternion.LookRotation(planarVelocity.normalized, Vector3.up);
                 transform.rotation = Quaternion.Slerp(
                     transform.rotation,
                     target,
                     1f - Mathf.Exp(-turnSharpness * Time.deltaTime));
             }
         }
-        else
-        {
-            desired = Vector3.zero;
-        }
 
-        float targetVisualMove = wantsMove && !IsAttacking && !IsDodging
-            ? Mathf.Lerp(0.36f, 0.58f, moveAmount)
+        bool locomotionActive = !actionWasActive && wantsMove;
+        float targetVisualMove = locomotionActive
+            ? Mathf.Clamp01(currentPlanarSpeed / Mathf.Max(0.1f, naturalJogSpeed))
             : 0f;
         locomotionVisualAmount = Mathf.MoveTowards(
             locomotionVisualAmount,
@@ -252,20 +295,16 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (controller.isGrounded) verticalVelocity = -1f;
         else verticalVelocity -= 20f * Time.deltaTime;
 
-        desired.y = verticalVelocity;
-        controller.Move(desired * Time.deltaTime);
+        Vector3 displacement = horizontalDisplacement;
+        displacement.y = verticalVelocity * Time.deltaTime;
+        controller.Move(displacement);
 
         if (Ready && animator.runtimeAnimatorController != null)
         {
-            float locomotionSpeed = wantsMove && !IsAttacking && !IsDodging
-                ? Mathf.Lerp(0.36f, 0.58f, moveAmount)
-                : 0f;
-            animator.SetFloat(MoveSpeedHash, locomotionSpeed, 0.10f, Time.deltaTime);
+            float animatorMoveSpeed = locomotionActive ? currentPlanarSpeed : 0f;
+            animator.SetFloat(MoveSpeedHash, animatorMoveSpeed, 0.10f, Time.deltaTime);
 
-            float naturalSpeed = Mathf.Max(0.1f, naturalJogSpeed);
-            float targetPlayback = locomotionSpeed > 0f
-                ? Mathf.Clamp(moveSpeed / naturalSpeed, 0.82f, 1.12f)
-                : 1f;
+            float targetPlayback = CalculateLocomotionPlaybackSpeed(animatorMoveSpeed);
             animator.speed = Mathf.MoveTowards(
                 animator.speed,
                 targetPlayback,
@@ -276,10 +315,105 @@ public sealed class VroidActionMotor : MonoBehaviour
                 float targetUpperWeight = Mathf.Lerp(
                     swordUpperBodyWeight,
                     0.12f,
-                    locomotionVisualAmount / 0.58f);
+                    locomotionVisualAmount);
                 animator.SetLayerWeight(1, targetUpperWeight);
             }
         }
+    }
+
+    private float CalculateLocomotionPlaybackSpeed(float planarSpeed)
+    {
+        if (planarSpeed <= 0.05f) return 1f;
+
+        if (planarSpeed <= naturalWalkSpeed)
+        {
+            // Keep the walk readable at low analogue input without making feet
+            // cycle implausibly slowly.
+            return Mathf.Clamp(
+                planarSpeed / Mathf.Max(0.1f, naturalWalkSpeed),
+                0.72f,
+                1.08f);
+        }
+
+        if (planarSpeed >= naturalRunSpeed)
+        {
+            return Mathf.Clamp(
+                planarSpeed / Mathf.Max(0.1f, naturalRunSpeed),
+                0.96f,
+                1.12f);
+        }
+
+        // The BlendTree contains authored walk, jog, and sprint cycles at
+        // physical speed thresholds, so each gait plays near its natural cadence.
+        return 1f;
+    }
+
+    private Vector3 AdvanceActionMotion(float deltaTime)
+    {
+        if (IsAttacking)
+        {
+            float duration = GetAttackDuration();
+            attackTime = Mathf.Max(0f, attackTime - deltaTime);
+            float phase = Mathf.Clamp01(1f - attackTime / duration);
+
+            float root = SampleRootDistance(slashMotion, phase);
+            float delta = root - actionRootDistance;
+            actionRootDistance = root;
+
+            if (!attackHitResolved && phase >= attackHitPhase)
+            {
+                attackHitResolved = true;
+                ResolveAttack();
+            }
+
+            return transform.forward * delta;
+        }
+
+        if (IsDodging)
+        {
+            float duration = GetDodgeDuration();
+            dodgeTime = Mathf.Max(0f, dodgeTime - deltaTime);
+            float phase = Mathf.Clamp01(1f - dodgeTime / duration);
+
+            float root = SampleRootDistance(dodgeMotion, phase);
+            float delta = root - actionRootDistance;
+            actionRootDistance = root;
+            return dodgeDirection * delta;
+        }
+
+        return Vector3.zero;
+    }
+
+    private float GetAttackDuration()
+    {
+        return slashMotion != null && slashMotion.duration > 0.05f
+            ? slashMotion.duration
+            : FallbackAttackDuration;
+    }
+
+    private float GetDodgeDuration()
+    {
+        return dodgeMotion != null && dodgeMotion.duration > 0.05f
+            ? dodgeMotion.duration
+            : FallbackDodgeDuration;
+    }
+
+    private static float SampleRootDistance(RuntimeMotion motion, float normalizedTime)
+    {
+        if (motion?.rootProgress == null ||
+            motion.rootProgress.Length < 2)
+        {
+            return 0f;
+        }
+
+        float frame = Mathf.Clamp01(normalizedTime) *
+            (motion.rootProgress.Length - 1);
+        int a = Mathf.FloorToInt(frame);
+        int b = Mathf.Min(a + 1, motion.rootProgress.Length - 1);
+        return Mathf.Lerp(
+            motion.rootProgress[a],
+            motion.rootProgress[b],
+            frame - a);
     }
 
     private void LateUpdate()
@@ -287,6 +421,10 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (Ready && (IsAttacking || IsDodging))
         {
             ApplyActionPose();
+        }
+        else if (Ready && qaMode)
+        {
+            ApplyQaActionPose();
         }
 
         CorrectVisualGrounding();
@@ -312,15 +450,16 @@ public sealed class VroidActionMotor : MonoBehaviour
             return;
         }
 
-        Vector3 desired = transform.position
-            - transform.forward * cameraDistance
-            + Vector3.up * cameraHeight;
+        Vector3 look = transform.position + Vector3.up * cameraLookHeight;
+        Quaternion orbit = Quaternion.Euler(cameraPitch, cameraYaw, 0f);
+        Vector3 cameraDirection = orbit * Vector3.back;
+        float resolvedDistance = ResolveCameraDistance(look, cameraDirection);
+        Vector3 desired = look + cameraDirection * resolvedDistance;
+
         viewCamera.transform.position = Vector3.Lerp(
             viewCamera.transform.position,
             desired,
-            1f - Mathf.Exp(-10f * Time.deltaTime));
-
-        Vector3 look = transform.position + Vector3.up * cameraLookHeight;
+            1f - Mathf.Exp(-14f * Time.deltaTime));
         viewCamera.transform.rotation = Quaternion.LookRotation(
             look - viewCamera.transform.position,
             Vector3.up);
@@ -336,6 +475,8 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (!Ready || animator.runtimeAnimatorController == null) return;
 
         qaMode = true;
+        qaMotion = motion;
+        qaPhase = Mathf.Clamp01(phase);
         weaponHandLocalEuler = weaponEuler;
         attackTime = 0f;
         dodgeTime = 0f;
@@ -344,7 +485,8 @@ public sealed class VroidActionMotor : MonoBehaviour
         float speed = motion switch
         {
             "walk" or "walkformal" => 0.35f,
-            "jog" => 1f,
+            "jog" => UalJogSpeed,
+            "run" or "sprint" => UalRunSpeed,
             _ => 0f,
         };
 
@@ -354,6 +496,8 @@ public sealed class VroidActionMotor : MonoBehaviour
             "walk" => "QA_Walk",
             "walkformal" => "QA_WalkFormal",
             "jog" => "QA_Jog",
+            "run" or "sprint" => "QA_Sprint",
+            "slash" or "dodge" => "QA_Idle",
             _ => "QA_Idle",
         };
 
@@ -394,6 +538,8 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (!qaMode) return;
 
         qaMode = false;
+        qaMotion = null;
+        qaPhase = 0f;
         if (animator != null)
         {
             animator.speed = 1f;
@@ -432,8 +578,10 @@ public sealed class VroidActionMotor : MonoBehaviour
     private void TryAttack()
     {
         if (!Ready || IsAttacking || IsDodging) return;
-        attackTime = AttackDuration;
-        Invoke(nameof(ResolveAttack), 0.27f);
+        planarVelocity = Vector3.zero;
+        attackTime = GetAttackDuration();
+        actionRootDistance = 0f;
+        attackHitResolved = false;
     }
 
     private void ResolveAttack()
@@ -453,7 +601,9 @@ public sealed class VroidActionMotor : MonoBehaviour
         if (!Ready || IsAttacking || IsDodging) return;
         Vector3 move = CameraRelative(input);
         dodgeDirection = move.sqrMagnitude > 0.05f ? move.normalized : transform.forward;
-        dodgeTime = DodgeDuration;
+        planarVelocity = Vector3.zero;
+        dodgeTime = GetDodgeDuration();
+        actionRootDistance = 0f;
     }
 
     private Vector3 CameraRelative(Vector2 input)
@@ -469,11 +619,38 @@ public sealed class VroidActionMotor : MonoBehaviour
         return forward * input.y + right * input.x;
     }
 
+    private void ApplyQaActionPose()
+    {
+        if (animator == null || (qaMotion != "slash" && qaMotion != "dodge"))
+        {
+            return;
+        }
+
+        // QA freezes the Animator. Re-evaluate the same authored idle pose on
+        // every frame before applying the generated delta so the delta is never
+        // accumulated by repeated LateUpdate calls.
+        animator.Play("QA_Idle", 0, 0f);
+        if (animator.layerCount > 1)
+        {
+            animator.SetLayerWeight(1, 0f);
+        }
+        animator.Update(0f);
+
+        if (qaMotion == "slash" && slashMotion != null)
+        {
+            ApplyGeneratedMotion(slashMotion, qaPhase, true);
+        }
+        else if (qaMotion == "dodge" && dodgeMotion != null)
+        {
+            ApplyGeneratedMotion(dodgeMotion, qaPhase, false);
+        }
+    }
+
     private void ApplyActionPose()
     {
         if (IsDodging)
         {
-            float u = Mathf.Clamp01(1f - dodgeTime / DodgeDuration);
+            float u = Mathf.Clamp01(1f - dodgeTime / GetDodgeDuration());
             if (dodgeMotion != null)
             {
                 ApplyGeneratedMotion(dodgeMotion, u, false);
@@ -489,7 +666,7 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         if (IsAttacking)
         {
-            float u = Mathf.Clamp01(1f - attackTime / AttackDuration);
+            float u = Mathf.Clamp01(1f - attackTime / GetAttackDuration());
             if (slashMotion != null)
             {
                 ApplyGeneratedMotion(slashMotion, u, true);
@@ -568,16 +745,56 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         if (tracks.Count == 0) return null;
 
+        float[] rootProgress = BuildRootProgress(
+            data.rootTranslation,
+            data.frameCount);
+
         Debug.Log(
             $"Bound generated humanoid motion {resourceName}: " +
-            $"{data.frameCount}f @ {data.fps}fps, {tracks.Count} tracks.");
+            $"{data.frameCount}f @ {data.fps}fps, {tracks.Count} tracks, " +
+            $"duration={data.duration:F3}s, rootDisplacement=" +
+            $"{rootProgress[rootProgress.Length - 1]:F3}m.");
 
         return new RuntimeMotion
         {
             fps = data.fps,
             frameCount = data.frameCount,
+            duration = data.duration > 0f
+                ? data.duration
+                : data.frameCount / (float)data.fps,
+            rootProgress = rootProgress,
             tracks = tracks,
         };
+    }
+
+    private static float[] BuildRootProgress(
+        float[] rootTranslation,
+        int frameCount)
+    {
+        int frames = Mathf.Max(2, frameCount);
+        float[] progress = new float[frames];
+
+        if (rootTranslation == null || rootTranslation.Length < frames * 3)
+        {
+            return progress;
+        }
+
+        int end = (frames - 1) * 3;
+        Vector2 final = new(rootTranslation[end], rootTranslation[end + 2]);
+        if (final.sqrMagnitude < 1e-6f)
+        {
+            return progress;
+        }
+
+        Vector2 axis = final.normalized;
+        for (int frame = 1; frame < frames; frame++)
+        {
+            int i = frame * 3;
+            Vector2 position = new(rootTranslation[i], rootTranslation[i + 2]);
+            progress[frame] = Vector2.Dot(position, axis);
+        }
+
+        return progress;
     }
 
     private void ApplyGeneratedMotion(RuntimeMotion motion, float normalizedTime, bool attack)
@@ -698,12 +915,28 @@ public sealed class VroidActionMotor : MonoBehaviour
         groundError = targetFootY - footY;
 
         Vector3 local = avatarRoot.localPosition;
-        float desiredLocalY = Mathf.Clamp(
-            local.y + groundError,
-            avatarBaseLocalPosition.y - 0.16f,
-            avatarBaseLocalPosition.y + 0.16f);
+        bool mayBeAirborne = !qaMode &&
+            (currentPlanarSpeed > naturalWalkSpeed * 1.05f || IsAttacking || IsDodging);
 
-        float snap = 1f - Mathf.Exp(-28f * Time.deltaTime);
+        float desiredLocalY;
+        float correctionSharpness;
+        if (mayBeAirborne && groundError < -0.045f)
+        {
+            // Jog/action clips can have a legitimate flight phase. Do not pull
+            // the whole avatar down just to keep one foot touching the floor.
+            desiredLocalY = avatarBaseLocalPosition.y;
+            correctionSharpness = 7f;
+        }
+        else
+        {
+            desiredLocalY = Mathf.Clamp(
+                local.y + groundError,
+                avatarBaseLocalPosition.y - 0.16f,
+                avatarBaseLocalPosition.y + 0.16f);
+            correctionSharpness = 28f;
+        }
+
+        float snap = 1f - Mathf.Exp(-correctionSharpness * Time.deltaTime);
         local.y = Mathf.Lerp(local.y, desiredLocalY, snap);
         avatarRoot.localPosition = local;
     }
@@ -814,35 +1047,236 @@ public sealed class VroidActionMotor : MonoBehaviour
         t.rotation = Quaternion.AngleAxis(degrees, worldAxis) * t.rotation;
     }
 
-    private void HandleTouchJoystick()
+    private static Vector2 ApplyStickDeadZone(Vector2 value, float deadZone)
     {
+        float magnitude = value.magnitude;
+        if (magnitude <= deadZone) return Vector2.zero;
+
+        float scaled = Mathf.InverseLerp(deadZone, 1f, Mathf.Clamp01(magnitude));
+        return value.normalized * scaled;
+    }
+
+    private void HandlePointerControls()
+    {
+        Vector2 previousTouchMove = touchMove;
         touchMove = Vector2.zero;
+        HandleMouseCamera();
+
+        Rect attackRect = GetAttackTouchRect();
+        Rect dodgeRect = GetDodgeTouchRect();
+        Vector2 joystickCenter = GetJoystickCenter();
+        float joystickRadius = GetJoystickRadius();
 
         foreach (Touch touch in Input.touches)
         {
-            bool leftZone = touch.position.x < Screen.width * 0.52f
-                && touch.position.y < Screen.height * 0.48f;
-
-            if (touch.phase == TouchPhase.Began && leftZone && joystickFinger < 0)
+            if (touch.phase == TouchPhase.Began)
             {
-                joystickFinger = touch.fingerId;
-                joystickOrigin = touch.position;
-                joystickCurrent = touch.position;
+                if (attackRect.Contains(touch.position))
+                {
+                    TryAttack();
+                    continue;
+                }
+
+                if (dodgeRect.Contains(touch.position))
+                {
+                    Vector2 dodgeInput = touchMove.sqrMagnitude > 0.01f
+                        ? touchMove
+                        : previousTouchMove;
+                    TryDodge(dodgeInput);
+                    continue;
+                }
+
+                if (joystickFinger < 0 &&
+                    touch.position.x < Screen.width * 0.48f &&
+                    touch.position.y < Screen.height * 0.48f &&
+                    Vector2.Distance(touch.position, joystickCenter) <= joystickRadius * 1.45f)
+                {
+                    joystickFinger = touch.fingerId;
+                    joystickCurrent = touch.position;
+                    continue;
+                }
+
+                if (cameraFinger < 0 &&
+                    touch.position.x > Screen.width * 0.42f &&
+                    !attackRect.Contains(touch.position) &&
+                    !dodgeRect.Contains(touch.position))
+                {
+                    cameraFinger = touch.fingerId;
+                    cameraLastTouch = touch.position;
+                    continue;
+                }
             }
 
-            if (touch.fingerId != joystickFinger) continue;
-
-            if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+            if (touch.fingerId == joystickFinger)
             {
-                joystickFinger = -1;
-                joystickCurrent = joystickOrigin;
+                if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+                {
+                    joystickFinger = -1;
+                    joystickCurrent = joystickCenter;
+                    continue;
+                }
+
+                joystickCurrent = touch.position;
+                Vector2 delta = joystickCurrent - joystickCenter;
+                touchMove = ApplyStickDeadZone(
+                    Vector2.ClampMagnitude(delta / joystickRadius, 1f),
+                    0.10f);
                 continue;
             }
 
-            joystickCurrent = touch.position;
-            Vector2 delta = joystickCurrent - joystickOrigin;
-            touchMove = Vector2.ClampMagnitude(delta / Mathf.Max(72f, Screen.width * 0.18f), 1f);
+            if (touch.fingerId == cameraFinger)
+            {
+                if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+                {
+                    cameraFinger = -1;
+                    continue;
+                }
+
+                Vector2 delta = touch.position - cameraLastTouch;
+                cameraYaw += delta.x * touchCameraSensitivity;
+                cameraPitch = Mathf.Clamp(
+                    cameraPitch - delta.y * touchCameraSensitivity * 0.72f,
+                    -8f,
+                    42f);
+                cameraLastTouch = touch.position;
+            }
         }
+
+        if (joystickFinger < 0)
+        {
+            joystickCurrent = joystickCenter;
+        }
+
+        if (Input.touchCount == 0 && Input.GetMouseButtonDown(0))
+        {
+            Vector2 mouse = Input.mousePosition;
+            if (attackRect.Contains(mouse))
+            {
+                TryAttack();
+            }
+            else if (dodgeRect.Contains(mouse))
+            {
+                TryDodge(Vector2.up);
+            }
+        }
+    }
+
+    private void HandleMouseCamera()
+    {
+        if (Input.touchCount > 0) return;
+
+        Vector2 mouse = Input.mousePosition;
+        bool overActionButton =
+            GetAttackTouchRect().Contains(mouse) ||
+            GetDodgeTouchRect().Contains(mouse);
+
+        if (Input.GetMouseButtonDown(1) ||
+            (Input.GetMouseButtonDown(0) && !overActionButton))
+        {
+            mouseCameraDragging = true;
+            mouseCameraLast = mouse;
+        }
+
+        if (!Input.GetMouseButton(0) && !Input.GetMouseButton(1))
+        {
+            mouseCameraDragging = false;
+        }
+
+        if (mouseCameraDragging)
+        {
+            Vector2 now = Input.mousePosition;
+            Vector2 delta = now - mouseCameraLast;
+            cameraYaw += delta.x * mouseCameraSensitivity;
+            cameraPitch = Mathf.Clamp(
+                cameraPitch - delta.y * mouseCameraSensitivity * 0.72f,
+                -8f,
+                42f);
+            mouseCameraLast = now;
+        }
+
+        float scroll = Input.mouseScrollDelta.y;
+        if (Mathf.Abs(scroll) > 0.01f)
+        {
+            cameraDistance = Mathf.Clamp(
+                cameraDistance - scroll * 0.35f,
+                cameraMinDistance,
+                cameraMaxDistance);
+        }
+    }
+
+    private float ResolveCameraDistance(Vector3 target, Vector3 direction)
+    {
+        float desired = Mathf.Clamp(cameraDistance, cameraMinDistance, cameraMaxDistance);
+        RaycastHit[] hits = Physics.SphereCastAll(
+            target,
+            0.16f,
+            direction,
+            desired,
+            ~0,
+            QueryTriggerInteraction.Ignore);
+
+        float resolved = desired;
+        foreach (RaycastHit hit in hits)
+        {
+            if (hit.collider == null) continue;
+            Transform hitTransform = hit.collider.transform;
+            if (hitTransform == transform || hitTransform.IsChildOf(transform)) continue;
+            resolved = Mathf.Min(resolved, Mathf.Max(cameraMinDistance * 0.55f, hit.distance - 0.12f));
+        }
+        return resolved;
+    }
+
+    private Vector2 GetJoystickCenter()
+    {
+        float scale = Mathf.Clamp(Screen.width / 430f, 0.78f, 1.25f);
+        Rect safe = Screen.safeArea;
+        float baseSize = 92f * scale;
+        float margin = 18f * scale;
+        return new Vector2(
+            safe.x + margin + baseSize * 0.58f,
+            safe.y + margin + baseSize * 0.58f);
+    }
+
+    private float GetJoystickRadius()
+    {
+        float scale = Mathf.Clamp(Screen.width / 430f, 0.78f, 1.25f);
+        return 52f * scale;
+    }
+
+    private Rect GetAttackTouchRect()
+    {
+        float scale = Mathf.Clamp(Screen.width / 430f, 0.78f, 1.25f);
+        Rect safe = Screen.safeArea;
+        float size = 82f * scale;
+        float margin = 18f * scale;
+        return new Rect(
+            safe.xMax - margin - size,
+            safe.y + margin,
+            size,
+            size);
+    }
+
+    private Rect GetDodgeTouchRect()
+    {
+        float scale = Mathf.Clamp(Screen.width / 430f, 0.78f, 1.25f);
+        Rect safe = Screen.safeArea;
+        float size = 82f * scale;
+        float margin = 18f * scale;
+        float dodgeSize = size * 0.78f;
+        return new Rect(
+            safe.xMax - margin * 1.25f - size * 2f,
+            safe.y + margin + size * 0.04f,
+            dodgeSize,
+            dodgeSize);
+    }
+
+    private static Rect TouchRectToGuiRect(Rect touchRect)
+    {
+        return new Rect(
+            touchRect.x,
+            Screen.height - touchRect.yMax,
+            touchRect.width,
+            touchRect.height);
     }
 
     private void OnGUI()
@@ -851,8 +1285,7 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         float scale = Mathf.Clamp(Screen.width / 430f, 0.78f, 1.25f);
         Rect safe = Screen.safeArea;
-        float size = 72f * scale;
-        float margin = 18f * scale;
+        float size = 82f * scale;
 
         GUIStyle action = new(GUI.skin.button)
         {
@@ -860,24 +1293,28 @@ public sealed class VroidActionMotor : MonoBehaviour
             fontStyle = FontStyle.Bold,
         };
 
-        Rect attack = new(safe.xMax - margin - size, safe.yMax - margin - size, size, size);
-        Rect dodge = new(safe.xMax - margin * 1.25f - size * 2f, safe.yMax - margin - size * 0.78f, size * 0.78f, size * 0.78f);
+        Rect attack = TouchRectToGuiRect(GetAttackTouchRect());
+        Rect dodge = TouchRectToGuiRect(GetDodgeTouchRect());
 
-        if (GUI.Button(attack, "ATTACK", action)) TriggerAttack();
-        if (GUI.Button(dodge, "DODGE", action)) TriggerDodge();
+        GUI.Box(attack, "ATTACK", action);
+        GUI.Box(dodge, "DODGE", action);
 
-        Vector2 center = joystickFinger >= 0
-            ? joystickOrigin
-            : new Vector2(safe.x + margin + size * 0.55f, safe.yMax - margin - size * 0.55f);
+        Vector2 center = GetJoystickCenter();
+        float radius = GetJoystickRadius();
         Vector2 knob = joystickFinger >= 0
-            ? center + Vector2.ClampMagnitude(joystickCurrent - center, size * 0.42f)
+            ? center + Vector2.ClampMagnitude(joystickCurrent - center, radius)
             : center;
 
         Color prev = GUI.color;
-        GUI.color = new Color(1f, 1f, 1f, 0.24f);
-        GUI.Box(new Rect(center.x - size * 0.5f, Screen.height - center.y - size * 0.5f, size, size), "");
-        GUI.color = new Color(1f, 1f, 1f, 0.48f);
-        GUI.Box(new Rect(knob.x - size * 0.18f, Screen.height - knob.y - size * 0.18f, size * 0.36f, size * 0.36f), "");
+        GUI.color = new Color(0.08f, 0.12f, 0.18f, 0.24f);
+        GUI.Box(
+            new Rect(center.x - radius, Screen.height - center.y - radius, radius * 2f, radius * 2f),
+            "");
+        GUI.color = new Color(0.90f, 0.94f, 1f, 0.58f);
+        float knobRadius = radius * 0.34f;
+        GUI.Box(
+            new Rect(knob.x - knobRadius, Screen.height - knob.y - knobRadius, knobRadius * 2f, knobRadius * 2f),
+            "");
         GUI.color = prev;
     }
 }

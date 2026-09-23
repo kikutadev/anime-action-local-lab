@@ -12,14 +12,14 @@
 - Cを既定プレイヤーとして使用
 - A / B / C は実行中に切替可能
 - Quaternius Universal Animation Library (CC0) をUnity HumanoidでVRoidへretarget
-- 立ち姿はIdle_Loop、移動はJog_Fwd_Loopを使用。QAで不自然だったWalk系はproduction locomotionから除外
-- HY-Motion 1.0 Liteの既存slash / dodgeを18 Humanoid trackへ差分リターゲット
+- 立ち姿はIdle_Loop、歩行はWalk_Loop、ジョグはJog_Fwd_Loop、全力移動はSprint_Loopを使用し、Unity HumanoidでVRoidへretarget
+- HY-Motion 1.0 Liteのslash / dodgeを18 Humanoid trackへ差分リターゲットし、生成root軌跡の時間・移動量をaction displacementへ反映
 - Foot / Toes基準＋床Raycastで見た目の足裏接地を補正
 - CharacterControllerによる移動・旋回
 - 三人称追従カメラ
 - 練習用ダミーと近接攻撃判定
-- PC: WASD / J / Space
-- Mobile: 左スティック / ATTACK / DODGE
+- PC: WASD / 画面ドラッグでカメラ / J / Space
+- Mobile: 固定左スティック / 右側ドラッグでカメラ / ATTACK / DODGE
 - Unity 6.3 WebGL
 - GitHub Pagesへデプロイ
 

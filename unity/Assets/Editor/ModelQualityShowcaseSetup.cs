@@ -29,6 +29,17 @@ public static class ModelQualityShowcaseSetup
         characterController.radius = 0.30f;
         characterController.center = new Vector3(0f, 0.9f, 0f);
         VroidActionMotor motor = player.AddComponent<VroidActionMotor>();
+        motor.moveSpeed = VroidActionMotor.UalRunSpeed;
+        motor.naturalWalkSpeed = VroidActionMotor.UalWalkSpeed;
+        motor.naturalJogSpeed = VroidActionMotor.UalJogSpeed;
+        motor.naturalRunSpeed = VroidActionMotor.UalRunSpeed;
+        motor.acceleration = 30f;
+        motor.deceleration = 38f;
+        motor.turnSharpness = 20f;
+        motor.cameraDistance = 4.2f;
+        motor.cameraMinDistance = 2.2f;
+        motor.cameraMaxDistance = 6.2f;
+        motor.cameraPitch = 13f;
         motor.swordUpperBodyWeight = 0.85f;
         motor.weaponIdleLocalEuler = new Vector3(0f, 0f, -90f);
         motor.weaponMoveLocalEuler = new Vector3(0f, 90f, 0f);

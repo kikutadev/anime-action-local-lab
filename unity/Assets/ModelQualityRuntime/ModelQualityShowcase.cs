@@ -452,7 +452,7 @@ public sealed class ModelQualityShowcase : MonoBehaviour
 
         string sub = loading
             ? "読み込み中…"
-            : errorMessage ?? "移動: WASD / 左スティック　攻撃: J　回避: Space";
+            : errorMessage ?? "移動: WASD / 左スティック　視点: 画面ドラッグ　攻撃: J　回避: Space";
         GUI.Label(
             new Rect(safe.x + margin, safe.y + 39f * scale, safe.width - margin * 2f, 24f * scale),
             sub,

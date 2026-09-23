@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Linq;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -8,14 +10,15 @@ public static class ModelQualityAcceptance
 {
     public static void ValidateAssets()
     {
-        RuntimeAnimatorController locomotion =
-            AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(
+        AnimatorController locomotion =
+            AssetDatabase.LoadAssetAtPath<AnimatorController>(
                 "Assets/Resources/VroidLocomotion.controller");
         if (locomotion == null)
         {
             throw new InvalidOperationException(
                 "Missing VroidLocomotion.controller.");
         }
+        ValidateLocomotionController(locomotion);
 
         string root = Path.Combine(Application.dataPath, "StreamingAssets", "Models");
         for (int i = 0; i < 3; i++)
@@ -34,6 +37,61 @@ public static class ModelQualityAcceptance
             }
 
             Debug.Log($"Model quality asset {suffix} passed: {bytes} bytes");
+        }
+    }
+
+    private static void ValidateLocomotionController(AnimatorController controller)
+    {
+        if (!controller.parameters.Any(parameter => parameter.name == "MoveSpeed"))
+        {
+            throw new InvalidOperationException(
+                "VroidLocomotion.controller is missing MoveSpeed.");
+        }
+
+        AnimatorState locomotionState = controller.layers[0].stateMachine.states
+            .Select(child => child.state)
+            .FirstOrDefault(state => state.name == "Locomotion");
+        BlendTree tree = locomotionState?.motion as BlendTree;
+        if (tree == null)
+        {
+            throw new InvalidOperationException(
+                "VroidLocomotion.controller is missing its Locomotion BlendTree.");
+        }
+
+        ChildMotion[] children = tree.children;
+        string[] expectedSuffixes =
+        {
+            "|Idle_Loop",
+            "|Walk_Loop",
+            "|Jog_Fwd_Loop",
+            "|Sprint_Loop",
+        };
+        float[] expectedThresholds =
+        {
+            0f,
+            VroidActionMotor.UalWalkSpeed,
+            VroidActionMotor.UalJogSpeed,
+            VroidActionMotor.UalRunSpeed,
+        };
+
+        if (children.Length != expectedSuffixes.Length)
+        {
+            throw new InvalidOperationException(
+                $"Locomotion BlendTree expected 4 motions, got {children.Length}.");
+        }
+
+        for (int i = 0; i < children.Length; i++)
+        {
+            string motionName = children[i].motion != null
+                ? children[i].motion.name
+                : string.Empty;
+            if (!motionName.EndsWith(expectedSuffixes[i], StringComparison.Ordinal) ||
+                Mathf.Abs(children[i].threshold - expectedThresholds[i]) > 0.01f)
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected locomotion child {i}: " +
+                    $"motion={motionName}, threshold={children[i].threshold:F2}.");
+            }
         }
     }
 
@@ -58,15 +116,22 @@ public static class ModelQualityAcceptance
         }
 
         VroidActionMotor motor = controller.actionMotor;
-        if (motor.moveSpeed < 1.2f || motor.moveSpeed > 5.0f ||
-            motor.naturalWalkSpeed < 0.5f || motor.naturalWalkSpeed > 3.0f ||
-            motor.naturalJogSpeed < 1.0f || motor.naturalJogSpeed > 5.0f ||
-            motor.swordUpperBodyWeight < 0f || motor.swordUpperBodyWeight > 1f)
+        if (Mathf.Abs(motor.moveSpeed - VroidActionMotor.UalRunSpeed) > 0.01f ||
+            Mathf.Abs(motor.naturalWalkSpeed - VroidActionMotor.UalWalkSpeed) > 0.01f ||
+            Mathf.Abs(motor.naturalJogSpeed - VroidActionMotor.UalJogSpeed) > 0.01f ||
+            Mathf.Abs(motor.naturalRunSpeed - VroidActionMotor.UalRunSpeed) > 0.01f ||
+            motor.acceleration < 20f || motor.deceleration < 20f ||
+            motor.turnSharpness < 16f ||
+            motor.cameraMinDistance < 1.5f || motor.cameraMaxDistance < motor.cameraMinDistance ||
+            motor.swordUpperBodyWeight < 0f || motor.swordUpperBodyWeight > 1f ||
+            motor.attackHitPhase < 0.05f || motor.attackHitPhase > 0.95f)
         {
             throw new InvalidOperationException(
                 $"Locomotion tuning is outside sane runtime ranges: " +
                 $"move={motor.moveSpeed:F2}, walk={motor.naturalWalkSpeed:F2}, " +
-                $"jog={motor.naturalJogSpeed:F2}, upper={motor.swordUpperBodyWeight:F2}.");
+                $"jog={motor.naturalJogSpeed:F2}, run={motor.naturalRunSpeed:F2}, " +
+                $"accel={motor.acceleration:F1}, decel={motor.deceleration:F1}, " +
+                $"turn={motor.turnSharpness:F1}, upper={motor.swordUpperBodyWeight:F2}.");
         }
 
         if (Vector3.Distance(motor.weaponVisual.localScale, Vector3.one * 0.78f) > 0.01f)

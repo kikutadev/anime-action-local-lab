@@ -78,6 +78,25 @@ await withQaRuntime(async ({ call, logs, sleep }) => {
     ["walk_025", "walk|0.25|threequarter|0.15|0|0|-35"],
     ["walk_050", "walk|0.50|threequarter|0.15|0|0|-35"],
     ["walk_075", "walk|0.75|threequarter|0.15|0|0|-35"],
+    ["jog_000", "jog|0.00|threequarter|0.05|0|0|-35"],
+    ["jog_025", "jog|0.25|threequarter|0.05|0|0|-35"],
+    ["jog_050", "jog|0.50|threequarter|0.05|0|0|-35"],
+    ["jog_075", "jog|0.75|threequarter|0.05|0|0|-35"],
+    ["run_000", "run|0.00|threequarter|0.03|0|0|-35"],
+    ["run_025", "run|0.25|threequarter|0.03|0|0|-35"],
+    ["run_050", "run|0.50|threequarter|0.03|0|0|-35"],
+    ["run_075", "run|0.75|threequarter|0.03|0|0|-35"],
+    ["slash_000", "slash|0.00|threequarter|0|0|90|0"],
+    ["slash_020", "slash|0.20|threequarter|0|0|90|0"],
+    ["slash_040", "slash|0.40|threequarter|0|0|90|0"],
+    ["slash_055", "slash|0.55|threequarter|0|0|90|0"],
+    ["slash_075", "slash|0.75|threequarter|0|0|90|0"],
+    ["slash_095", "slash|0.95|threequarter|0|0|90|0"],
+    ["dodge_000", "dodge|0.00|threequarter|0|0|90|0"],
+    ["dodge_025", "dodge|0.25|threequarter|0|0|90|0"],
+    ["dodge_050", "dodge|0.50|threequarter|0|0|90|0"],
+    ["dodge_075", "dodge|0.75|threequarter|0|0|90|0"],
+    ["dodge_095", "dodge|0.95|threequarter|0|0|90|0"],
   ];
 
   for (const [name, spec] of staticSpecs) {
@@ -104,7 +123,7 @@ await withQaRuntime(async ({ call, logs, sleep }) => {
   });
   for (let i = 0; i < 10; i++) {
     await sleep(110);
-    await screenshot("runtime_walk_" + String(i).padStart(2, "0"));
+    await screenshot("runtime_run_" + String(i).padStart(2, "0"));
   }
   await call("Input.dispatchKeyEvent", {
     type: "keyUp",
@@ -115,6 +134,65 @@ await withQaRuntime(async ({ call, logs, sleep }) => {
   });
   await sleep(350);
   await screenshot("runtime_stop");
+
+  await call("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: 470,
+    y: 380,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await call("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: 590,
+    y: 380,
+    button: "left",
+    buttons: 1,
+  });
+  await sleep(180);
+  await call("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: 590,
+    y: 380,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
+  await sleep(260);
+  await screenshot("runtime_camera_orbit");
+
+  async function tapKey(code, key, keyCode) {
+    await call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      code,
+      key,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    });
+    await sleep(45);
+    await call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      code,
+      key,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    });
+  }
+
+  await tapKey("KeyJ", "j", 74);
+  for (let i = 0; i < 8; i++) {
+    await sleep(180);
+    await screenshot("runtime_slash_" + String(i).padStart(2, "0"));
+  }
+  await sleep(260);
+
+  await tapKey("KeyK", "k", 75);
+  for (let i = 0; i < 7; i++) {
+    await sleep(145);
+    await screenshot("runtime_dodge_" + String(i).padStart(2, "0"));
+  }
+  await sleep(220);
 
   const fatal = logs.filter(line => /EXCEPTION|NullReferenceException|MissingReferenceException/.test(line));
   if (fatal.length > 0) {
@@ -127,7 +205,12 @@ await withQaRuntime(async ({ call, logs, sleep }) => {
     JSON.stringify(
       {
         staticSpecs,
-        runtimeFrames: 12,
+        runtimeFrames: {
+          locomotion: 12,
+          cameraOrbit: 1,
+          slash: 8,
+          dodge: 7,
+        },
         capturedAt: new Date().toISOString(),
       },
       null,
