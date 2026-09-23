@@ -1,11 +1,14 @@
-import fs from "fs";
-import http from "http";
-import os from "os";
-import path from "path";
-import { execFileSync, spawn } from "child_process";
-import { fileURLToPath } from "url";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-export const QA_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const TOOL_DIR = path.dirname(fileURLToPath(import.meta.url));
+const STATIC_SERVER_SCRIPT = path.join(TOOL_DIR, "qa_static_server.mjs");
+const PROCESS_GUARD_SCRIPT = path.join(TOOL_DIR, "qa_process_guard.mjs");
+
+export const QA_ROOT = path.resolve(TOOL_DIR, "..");
 
 function resolveChromeExecutable() {
   if (process.env.QA_CHROME) return process.env.QA_CHROME;
@@ -37,21 +40,6 @@ function resolveChromeExecutable() {
 }
 
 export const DEFAULT_CHROME = resolveChromeExecutable();
-
-const MIME_TYPES = new Map([
-  [".html", "text/html; charset=utf-8"],
-  [".js", "text/javascript; charset=utf-8"],
-  [".mjs", "text/javascript; charset=utf-8"],
-  [".css", "text/css; charset=utf-8"],
-  [".json", "application/json; charset=utf-8"],
-  [".wasm", "application/wasm"],
-  [".data", "application/octet-stream"],
-  [".png", "image/png"],
-  [".jpg", "image/jpeg"],
-  [".jpeg", "image/jpeg"],
-  [".svg", "image/svg+xml"],
-  [".vrm", "application/octet-stream"],
-]);
 
 export class QaTimeoutError extends Error {
   constructor(message) {
@@ -112,6 +100,8 @@ async function waitUntil(predicate, timeoutMs, intervalMs = 50) {
 }
 
 function findProfileProcesses(profileDir) {
+  if (!profileDir) return [];
+
   try {
     const output = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8" });
     return output
@@ -122,147 +112,87 @@ function findProfileProcesses(profileDir) {
         return match ? { pid: Number(match[1]), command: match[2] } : null;
       })
       .filter(Boolean)
-      .filter(processInfo => processInfo.command.includes(profileDir));
+      .filter(processInfo =>
+        processInfo.pid !== process.pid &&
+        processInfo.command.includes(profileDir));
   } catch {
     return [];
   }
 }
 
-async function terminateOwnedChrome(chrome, profileDir, graceMs = 1500) {
-  if (!chrome?.pid) return;
-  const groupId = chrome.pid;
+function signalPid(pid, signal) {
+  if (!isAlive(pid)) return;
 
-  if (isAlive(chrome.pid)) {
-    try {
-      chrome.kill("SIGTERM");
-    } catch {}
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
   }
+}
 
+function signalGroup(groupId, signal) {
+  if (!isProcessGroupAlive(groupId)) return;
+
+  try {
+    process.kill(-groupId, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+async function terminateOwnedChrome(chromePid, profileDir, graceMs = 1500) {
+  if (!chromePid && findProfileProcesses(profileDir).length === 0) return;
+
+  // 1) Root gets SIGTERM first, which gives Chrome a chance to tear down helpers itself.
+  signalPid(chromePid, "SIGTERM");
+
+  // 2) Wait for both the dedicated process group and profile-bound helpers.
   await waitUntil(
-    () => !isProcessGroupAlive(groupId) && findProfileProcesses(profileDir).length === 0,
+    () => !isProcessGroupAlive(chromePid) && findProfileProcesses(profileDir).length === 0,
     graceMs,
   );
 
-  const residualProfileProcesses = findProfileProcesses(profileDir);
-  for (const processInfo of residualProfileProcesses) {
-    try {
-      process.kill(processInfo.pid, "SIGKILL");
-    } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
-    }
+  // 3) Profile matching is deliberately narrow: only this unique QA user-data-dir.
+  for (const processInfo of findProfileProcesses(profileDir)) {
+    signalPid(processInfo.pid, "SIGKILL");
   }
 
-  if (isProcessGroupAlive(groupId)) {
-    // Chrome owns a dedicated process group created only for this QA run.
-    // This is narrower than pkill and cannot target the user's normal Chrome.
-    try {
-      process.kill(-groupId, "SIGKILL");
-    } catch (error) {
-      if (error?.code !== "ESRCH") throw error;
-    }
-  }
+  // 4) The Chrome root owns a dedicated process group. Kill any remaining descendants.
+  signalGroup(chromePid, "SIGKILL");
 
   await waitUntil(
-    () => !isProcessGroupAlive(groupId) && findProfileProcesses(profileDir).length === 0,
-    1000,
+    () => !isProcessGroupAlive(chromePid) && findProfileProcesses(profileDir).length === 0,
+    1200,
   );
-
-  const survivors = findProfileProcesses(profileDir);
-  if (isProcessGroupAlive(groupId) || survivors.length > 0) {
-    throw new Error(
-      `QA Chrome cleanup incomplete: groupAlive=${isProcessGroupAlive(groupId)} profilePids=${survivors.map(x => x.pid).join(",")}`,
-    );
-  }
 }
 
-function safeStaticPath(root, requestUrl) {
-  const url = new URL(requestUrl ?? "/", "http://127.0.0.1");
-  let pathname = decodeURIComponent(url.pathname);
-  if (pathname.endsWith("/")) pathname += "index.html";
+async function terminateOwnedProcess(rootPid, termGraceMs = 1000, killGraceMs = 800) {
+  if (!rootPid) return;
 
-  const absolute = path.resolve(root, "." + pathname);
-  const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
-  if (absolute !== root && !absolute.startsWith(rootWithSep)) return null;
-  return absolute;
+  signalPid(rootPid, "SIGTERM");
+  await waitUntil(() => !isProcessGroupAlive(rootPid), termGraceMs);
+
+  signalGroup(rootPid, "SIGKILL");
+  await waitUntil(() => !isProcessGroupAlive(rootPid), killGraceMs);
 }
 
-async function startStaticServer(root) {
-  const sockets = new Set();
-  const server = http.createServer((req, res) => {
-    const file = safeStaticPath(root, req.url);
-    if (!file) {
-      res.writeHead(403);
-      res.end("Forbidden");
-      return;
-    }
-
-    fs.stat(file, (statError, stat) => {
-      if (statError || !stat.isFile()) {
-        res.writeHead(404);
-        res.end("Not found");
-        return;
-      }
-
-      const headers = {
-        "Content-Type": MIME_TYPES.get(path.extname(file).toLowerCase()) ?? "application/octet-stream",
-        "Cache-Control": "no-store",
-      };
-      res.writeHead(200, headers);
-
-      if (req.method === "HEAD") {
-        res.end();
-        return;
-      }
-
-      const stream = fs.createReadStream(file);
-      stream.on("error", () => {
-        if (!res.headersSent) res.writeHead(500);
-        res.end();
-      });
-      stream.pipe(res);
-    });
-  });
-
-  server.on("connection", socket => {
-    sockets.add(socket);
-    socket.once("close", () => sockets.delete(socket));
-  });
-
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("QA HTTP server did not expose a TCP port");
-  }
-
-  return {
-    port: address.port,
-    async close() {
-      if (!server.listening) return;
-      server.closeAllConnections?.();
-      for (const socket of sockets) socket.destroy();
-      await new Promise(resolve => server.close(() => resolve()));
-    },
-  };
+function writeStateFile(stateFile, state) {
+  const temporary = stateFile + ".tmp";
+  fs.writeFileSync(temporary, JSON.stringify(state), "utf8");
+  fs.renameSync(temporary, stateFile);
 }
 
-async function waitForFile(file, timeoutMs, signal, chrome) {
+async function waitForFile(file, timeoutMs, signal, processPid, label) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) throw signal.reason;
-    if (chrome.exitCode !== null) {
-      throw new Error(`QA Chrome exited before DevTools became ready (exit=${chrome.exitCode})`);
+    if (processPid && !isAlive(processPid)) {
+      throw new Error(`${label} exited before becoming ready`);
     }
     if (fs.existsSync(file) && fs.statSync(file).size > 0) return;
     await sleep(50, signal);
   }
-  throw new QaTimeoutError(`Timed out waiting for ${file}`);
+  throw new QaTimeoutError(`Timed out waiting for ${label}: ${file}`);
 }
 
 async function fetchTargets(debugPort, pageUrl, timeoutMs, signal) {
@@ -340,6 +270,7 @@ class CdpClient {
     this.ws.send(JSON.stringify({ id, method, params }));
 
     if (!this.signal) return response;
+
     return Promise.race([
       response,
       new Promise((_, reject) => {
@@ -358,6 +289,7 @@ class CdpClient {
 
   async close() {
     if (this.closed) return;
+
     const closed = new Promise(resolve => this.ws.addEventListener("close", resolve, { once: true }));
     try {
       this.ws.close();
@@ -374,10 +306,13 @@ class CdpClient {
 
 async function connectCdp(webSocketUrl, signal) {
   if (signal?.aborted) throw signal.reason;
-  const ws = new WebSocket(webSocketUrl);
 
+  const ws = new WebSocket(webSocketUrl);
   await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new QaTimeoutError("Timed out opening CDP WebSocket")), 5000);
+    const timer = setTimeout(
+      () => reject(new QaTimeoutError("Timed out opening CDP WebSocket")),
+      5000,
+    );
     const onAbort = () => reject(signal.reason ?? new Error("QA runtime aborted"));
     const cleanup = () => {
       clearTimeout(timer);
@@ -402,6 +337,15 @@ async function connectCdp(webSocketUrl, signal) {
   return new CdpClient(ws, signal);
 }
 
+function spawnDetached(command, args) {
+  const child = spawn(command, args, {
+    stdio: "ignore",
+    detached: true,
+  });
+  child.unref();
+  return child;
+}
+
 export async function createQaRuntime({
   root = QA_ROOT,
   publishDir = path.join(root, "publish"),
@@ -413,49 +357,140 @@ export async function createQaRuntime({
 } = {}) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "anime-action-qa-"));
   const profileDir = path.join(tempDir, "chrome-profile");
+  const portFile = path.join(tempDir, "http-port");
+  const stateFile = path.join(tempDir, "owned-processes.json");
+  const completeMarker = path.join(tempDir, "cleanup-complete");
   fs.mkdirSync(profileDir, { recursive: true });
 
-  let httpServer;
-  let chrome;
-  let cdp;
+  const owned = {
+    tempDir,
+    profileDir,
+    serverPid: null,
+    chromePid: null,
+  };
+  writeStateFile(stateFile, owned);
 
-  const cleanup = async () => {
-    const errors = [];
+  let serverPort = null;
+  let serverPid = null;
+  let chromePid = null;
+  let guardPid = null;
+  let cdp = null;
+  let cleanupPromise = null;
 
-    try {
-      await cdp?.close();
-    } catch (error) {
-      errors.push(error);
-    }
+  // Start the watchdog before any detachable child. If this runner is SIGKILLed,
+  // the guard notices the missing parent and cleans whichever PIDs have been recorded.
+  const guard = spawnDetached(process.execPath, [
+    PROCESS_GUARD_SCRIPT,
+    String(process.pid),
+    stateFile,
+    completeMarker,
+  ]);
+  guardPid = guard.pid;
 
-    try {
-      await terminateOwnedChrome(chrome, profileDir);
-    } catch (error) {
-      errors.push(error);
-    }
+  const cleanup = () => {
+    if (cleanupPromise) return cleanupPromise;
 
-    try {
-      await httpServer?.close();
-    } catch (error) {
-      errors.push(error);
-    }
+    cleanupPromise = (async () => {
+      const primaryErrors = [];
 
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (error) {
-      errors.push(error);
-    }
+      try {
+        await cdp?.close();
+      } catch (error) {
+        primaryErrors.push(error);
+      }
 
-    if (errors.length > 0) {
-      throw new AggregateError(errors, "QA runtime cleanup failed");
-    }
+      try {
+        await terminateOwnedChrome(chromePid, profileDir);
+      } catch (error) {
+        primaryErrors.push(error);
+      }
+
+      try {
+        await terminateOwnedProcess(serverPid);
+      } catch (error) {
+        primaryErrors.push(error);
+      }
+
+      let chromeResidual = findProfileProcesses(profileDir);
+      let chromeGroupAlive = isProcessGroupAlive(chromePid);
+      let serverGroupAlive = isProcessGroupAlive(serverPid);
+
+      if (primaryErrors.length === 0 &&
+          chromeResidual.length === 0 &&
+          !chromeGroupAlive &&
+          !serverGroupAlive) {
+        try {
+          fs.writeFileSync(completeMarker, "ok\n", "utf8");
+        } catch (error) {
+          primaryErrors.push(error);
+        }
+      }
+
+      // If the primary cleanup encountered any issue, do not create the completion
+      // marker. SIGTERM makes the guard perform one final narrow cleanup pass.
+      try {
+        await terminateOwnedProcess(guardPid, primaryErrors.length === 0 ? 500 : 2500, 1000);
+      } catch (error) {
+        primaryErrors.push(error);
+      }
+
+      chromeResidual = findProfileProcesses(profileDir);
+      chromeGroupAlive = isProcessGroupAlive(chromePid);
+      serverGroupAlive = isProcessGroupAlive(serverPid);
+      const guardGroupAlive = isProcessGroupAlive(guardPid);
+
+      const finalErrors = [];
+      if (chromeGroupAlive || chromeResidual.length > 0) {
+        finalErrors.push(new Error(
+          `QA Chrome cleanup incomplete: groupAlive=${chromeGroupAlive} profilePids=${chromeResidual.map(x => x.pid).join(",")}`,
+        ));
+      }
+      if (serverGroupAlive) {
+        finalErrors.push(new Error(`QA HTTP server cleanup incomplete: pid=${serverPid}`));
+      }
+      if (guardGroupAlive) {
+        finalErrors.push(new Error(`QA cleanup guardian did not exit: pid=${guardPid}`));
+      }
+
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (error) {
+        finalErrors.push(error);
+      }
+
+      if (finalErrors.length > 0) {
+        throw new AggregateError([...primaryErrors, ...finalErrors], "QA runtime cleanup failed");
+      }
+    })();
+
+    return cleanupPromise;
   };
 
   try {
-    httpServer = await startStaticServer(publishDir);
-    const pageUrl = `http://127.0.0.1:${httpServer.port}/`;
+    const server = spawnDetached(process.execPath, [
+      STATIC_SERVER_SCRIPT,
+      publishDir,
+      portFile,
+    ]);
+    serverPid = server.pid;
+    owned.serverPid = serverPid;
+    writeStateFile(stateFile, owned);
 
-    chrome = spawn(chromePath, [
+    await waitForFile(
+      portFile,
+      startupTimeoutMs,
+      signal,
+      serverPid,
+      "QA HTTP server port file",
+    );
+    serverPort = Number(fs.readFileSync(portFile, "utf8").trim());
+    if (!Number.isInteger(serverPort) || serverPort <= 0) {
+      throw new Error(`Invalid QA HTTP server port: ${serverPort}`);
+    }
+
+    const pageUrl = `http://127.0.0.1:${serverPort}/`;
+
+    const chrome = spawnDetached(chromePath, [
       "--no-sandbox",
       "--enable-unsafe-swiftshader",
       "--use-angle=swiftshader",
@@ -466,13 +501,20 @@ export async function createQaRuntime({
       "--user-data-dir=" + profileDir,
       `--window-size=${width},${height}`,
       pageUrl,
-    ], {
-      stdio: "ignore",
-      detached: true,
-    });
+    ]);
+    chromePid = chrome.pid;
+    owned.chromePid = chromePid;
+    writeStateFile(stateFile, owned);
 
     const devToolsFile = path.join(profileDir, "DevToolsActivePort");
-    await waitForFile(devToolsFile, startupTimeoutMs, signal, chrome);
+    await waitForFile(
+      devToolsFile,
+      startupTimeoutMs,
+      signal,
+      chromePid,
+      "Chrome DevTools port file",
+    );
+
     const [portLine] = fs.readFileSync(devToolsFile, "utf8").trim().split(/\r?\n/);
     const debugPort = Number(portLine);
     if (!Number.isInteger(debugPort) || debugPort <= 0) {
@@ -486,9 +528,11 @@ export async function createQaRuntime({
       root,
       publishDir,
       pageUrl,
-      serverPort: httpServer.port,
+      serverPort,
+      serverPid,
       debugPort,
-      chromePid: chrome.pid,
+      chromePid,
+      guardPid,
       profileDir,
       tempDir,
       logs: cdp.logs,
@@ -552,6 +596,7 @@ export async function withQaRuntime(action, {
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
+
     try {
       await runtime?.cleanup();
     } finally {
