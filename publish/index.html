@@ -50,7 +50,8 @@
     script.src = 'Build/publish.loader.js';
     script.onload = () => createUnityInstance(canvas, config, p => {
       fill.style.width = (p * 100).toFixed(1) + '%';
-    }).then(() => {
+    }).then(instance => {
+      window.unityInstance = instance;
       loading.classList.add('hidden');
       setTimeout(() => loading.remove(), 220);
     }).catch(err => {

@@ -37,9 +37,12 @@ public sealed class ModelQualityShowcase : MonoBehaviour
     private Vector2 lastPointer;
     private bool dragging;
     private float lastPinchDistance;
+    private bool qaActive;
+    private string pendingQaSpec;
 
     private void Start()
     {
+        pendingQaSpec = ReadQaSpecFromUrl();
         Select(Mathf.Clamp(defaultIndex, 0, modelFiles.Length - 1));
     }
 
@@ -50,6 +53,94 @@ public sealed class ModelQualityShowcase : MonoBehaviour
         {
             currentInstance.Dispose();
             currentInstance = null;
+        }
+    }
+
+    private static string ReadQaSpecFromUrl()
+    {
+        string url = Application.absoluteURL;
+        if (string.IsNullOrEmpty(url)) return null;
+
+        int marker = url.IndexOf("?qa=", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0)
+        {
+            marker = url.IndexOf("&qa=", StringComparison.OrdinalIgnoreCase);
+        }
+        if (marker < 0) return null;
+
+        int start = marker + 4;
+        int end = url.IndexOf('&', start);
+        string encoded = end >= 0 ? url.Substring(start, end - start) : url.Substring(start);
+        return UnityWebRequest.UnEscapeURL(encoded);
+    }
+
+    public void SetQaState(string spec)
+    {
+        if (actionMotor == null || !actionMotor.Ready) return;
+
+        string[] parts = (spec ?? string.Empty).Split('|');
+        string motion = parts.Length > 0 && !string.IsNullOrWhiteSpace(parts[0])
+            ? parts[0]
+            : "idle";
+        float phase = 0f;
+        if (parts.Length > 1)
+        {
+            float.TryParse(
+                parts[1],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out phase);
+        }
+        string view = parts.Length > 2 && !string.IsNullOrWhiteSpace(parts[2])
+            ? parts[2]
+            : "threequarter";
+        float upperBodyWeight = actionMotor.swordUpperBodyWeight;
+        if (parts.Length > 3)
+        {
+            float.TryParse(
+                parts[3],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out upperBodyWeight);
+        }
+
+        Vector3 weaponEuler = actionMotor.weaponHandLocalEuler;
+        if (parts.Length > 6)
+        {
+            float.TryParse(
+                parts[4],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out weaponEuler.x);
+            float.TryParse(
+                parts[5],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out weaponEuler.y);
+            float.TryParse(
+                parts[6],
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out weaponEuler.z);
+        }
+
+        qaActive = true;
+        foreach (TrainingDummy dummy in FindObjectsByType<TrainingDummy>(FindObjectsSortMode.None))
+        {
+            dummy.gameObject.SetActive(false);
+        }
+        actionMotor.SetQaPose(motion, phase, view, upperBodyWeight, weaponEuler);
+    }
+
+    public void ExitQaState()
+    {
+        qaActive = false;
+        actionMotor?.ExitQaPose();
+        foreach (TrainingDummy dummy in FindObjectsByType<TrainingDummy>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None))
+        {
+            dummy.gameObject.SetActive(true);
         }
     }
 
@@ -78,6 +169,10 @@ public sealed class ModelQualityShowcase : MonoBehaviour
 
         string fileName = modelFiles[index];
         string url = Application.streamingAssetsPath.TrimEnd('/') + "/Models/" + fileName;
+        if (!url.Contains("://"))
+        {
+            url = "file://" + url;
+        }
 
         using UnityWebRequest request = UnityWebRequest.Get(url);
         yield return request.SendWebRequest();
@@ -120,7 +215,20 @@ public sealed class ModelQualityShowcase : MonoBehaviour
             currentInstance = loaded;
             currentRoot = loaded.gameObject;
             currentRoot.name = Path.GetFileNameWithoutExtension(fileName);
-            currentRoot.transform.SetParent(playerHost != null ? playerHost : transform, false);
+
+            Transform host = playerHost != null ? playerHost : transform;
+            Transform visualPivot = host.Find("AvatarVisualPivot");
+            if (visualPivot == null)
+            {
+                GameObject pivotObject = new("AvatarVisualPivot");
+                visualPivot = pivotObject.transform;
+                visualPivot.SetParent(host, false);
+                visualPivot.localPosition = Vector3.zero;
+                visualPivot.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                visualPivot.localScale = Vector3.one;
+            }
+
+            currentRoot.transform.SetParent(visualPivot, false);
             currentRoot.transform.localPosition = Vector3.zero;
             currentRoot.transform.localRotation = Quaternion.identity;
             currentRoot.transform.localScale = Vector3.one;
@@ -131,6 +239,11 @@ public sealed class ModelQualityShowcase : MonoBehaviour
             NormalizeForAction();
             actionMotor?.BindAvatar(currentRoot);
             loading = false;
+
+            if (!string.IsNullOrEmpty(pendingQaSpec))
+            {
+                SetQaState(pendingQaSpec);
+            }
 
             int vertices = 0;
             int triangles = 0;
@@ -308,6 +421,8 @@ public sealed class ModelQualityShowcase : MonoBehaviour
 
     private void OnGUI()
     {
+        if (qaActive) return;
+
         float scale = Mathf.Clamp(Screen.width / 430f, 0.82f, 1.35f);
         float margin = 14f * scale;
         Rect safe = Screen.safeArea;

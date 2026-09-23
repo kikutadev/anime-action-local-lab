@@ -29,6 +29,9 @@ public static class ModelQualityShowcaseSetup
         characterController.radius = 0.30f;
         characterController.center = new Vector3(0f, 0.9f, 0f);
         VroidActionMotor motor = player.AddComponent<VroidActionMotor>();
+        motor.swordUpperBodyWeight = 0.85f;
+        motor.weaponIdleLocalEuler = new Vector3(0f, 0f, -90f);
+        motor.weaponMoveLocalEuler = new Vector3(0f, 90f, 0f);
         controller.playerHost = player.transform;
         controller.actionMotor = motor;
 
@@ -73,7 +76,7 @@ public static class ModelQualityShowcaseSetup
         sword.transform.SetParent(player.transform, false);
         sword.transform.localPosition = Vector3.zero;
         sword.transform.localRotation = Quaternion.identity;
-        sword.transform.localScale = Vector3.one;
+        sword.transform.localScale = Vector3.one * 0.78f;
 
         foreach (Renderer renderer in sword.GetComponentsInChildren<Renderer>(true))
         {

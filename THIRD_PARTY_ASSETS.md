@@ -26,3 +26,18 @@ Runtime VRM loading uses UniVRM v0.131.2:
 https://github.com/vrm-c/UniVRM
 
 See the upstream repository/packages for their license notices.
+
+
+## Quaternius Universal Animation Library
+
+Locomotion uses the free Standard edition of Universal Animation Library by Quaternius.
+
+- Source: https://quaternius.itch.io/universal-animation-library
+- Imported file: `Assets/Animations/UAL/UAL1_Standard.fbx`
+- Standard pack upload used: 2026-06-16 build, downloaded 2026-09-23
+- License: CC0 1.0 Universal / Public Domain Dedication
+- Local license copy: `Assets/Animations/UAL/LICENSE.txt`
+
+The production locomotion controller currently uses `Idle_Loop` for standing and
+`Jog_Fwd_Loop` for movement through Unity Humanoid retargeting. `Walk_Loop` and
+`Walk_Formal_Loop` remain QA comparison clips but are not used for production movement.

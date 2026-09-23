@@ -11,7 +11,8 @@
 - VRoid公式 AvatarSample A / B / C を UniVRM でruntimeロード
 - Cを既定プレイヤーとして使用
 - A / B / C は実行中に切替可能
-- Humanoid骨を直接取得して軽量な歩行を生成
+- Quaternius Universal Animation Library (CC0) をUnity HumanoidでVRoidへretarget
+- 立ち姿はIdle_Loop、移動はJog_Fwd_Loopを使用。QAで不自然だったWalk系はproduction locomotionから除外
 - HY-Motion 1.0 Liteの既存slash / dodgeを18 Humanoid trackへ差分リターゲット
 - Foot / Toes基準＋床Raycastで見た目の足裏接地を補正
 - CharacterControllerによる移動・旋回
@@ -25,6 +26,10 @@
 Preview:
 
 https://kikutadev.github.io/anime-action-local-lab/
+
+## Visual QA gate
+
+立ち姿・移動姿勢の変更は、固定ポーズと実runtime連番をheadless Chromeで撮影し、contact sheetを目視確認してから公開する。ビルド成功や接地数値だけでは合格扱いにしない。
 
 ## Fast iteration rule
 
@@ -49,3 +54,16 @@ VRoid sample avatarsの出典・利用条件は `THIRD_PARTY_ASSETS.md` に記�
 - AniGen-mac: mesh + skeleton + skin weights生成
 - HY-Motion 1.0 Lite MPS検証
 - Blender/Python自前人型生成
+
+## Local QA process lifecycle
+
+ローカルQAは `tools/qa_runtime.mjs` を唯一のbrowser/server lifecycle ownerとして使う。
+
+- 1回のQA実行ごとに専用HTTP server・専用Chrome profile・動的CDP portを生成する
+- 固定のHTTP/CDP portへ接続しない
+- 事前起動したChromeへ接続しない
+- 旧来の共有QA profileを使わない
+- 正常終了・例外・timeout・SIGINT・SIGTERMではrunner自身がcleanupする
+- runnerがSIGKILL等で異常終了した場合はcleanup guardianがChrome/serverを限定回収する
+
+capture/debug scriptからChromeやHTTP serverを直接spawnしない。新しいQA scriptは `withQaRuntime(...)` の中でCDP操作だけを行う。

@@ -36,22 +36,27 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private const float AttackDuration = 0.68f;
     private const float DodgeDuration = 0.46f;
+    private static readonly int MoveSpeedHash = Animator.StringToHash("MoveSpeed");
     public Camera viewCamera;
     public Transform weaponVisual;
     public TrailRenderer weaponTrail;
-    public float moveSpeed = 4.6f;
+    public float moveSpeed = 2.35f;
     public float turnSharpness = 14f;
+    public float naturalWalkSpeed = 1.45f;
+    public float naturalJogSpeed = 2.50f;
     public float cameraDistance = 4.2f;
     public float cameraHeight = 1.8f;
     public float cameraLookHeight = 1.05f;
+    public float swordUpperBodyWeight = 0.85f;
+    public Vector3 weaponHandLocalPosition = Vector3.zero;
+    public Vector3 weaponHandLocalEuler = Vector3.zero;
+    public Vector3 weaponIdleLocalEuler = new(0f, 0f, -90f);
+    public Vector3 weaponMoveLocalEuler = new(0f, 90f, 0f);
 
     private CharacterController controller;
     private Animator animator;
     private Transform avatarRoot;
     private readonly Dictionary<HumanBodyBones, Transform> bones = new();
-    private readonly Dictionary<Transform, Quaternion> baseRelativeRotations = new();
-    private readonly Dictionary<Transform, Quaternion> baseLocalRotations = new();
-    private readonly Dictionary<Transform, Vector3> baseLocalPositions = new();
 
     private RuntimeMotion slashMotion;
     private RuntimeMotion dodgeMotion;
@@ -63,17 +68,21 @@ public sealed class VroidActionMotor : MonoBehaviour
     private bool hasFootReference;
 
     private float verticalVelocity;
+    private float locomotionVisualAmount;
     private float attackTime;
     private float dodgeTime;
     private Vector3 dodgeDirection;
-    private float walkClock;
 
     private int joystickFinger = -1;
     private Vector2 joystickOrigin;
     private Vector2 joystickCurrent;
     private Vector2 touchMove;
 
+    private bool qaMode;
+    private float qaCameraYaw;
+
     public bool Ready => animator != null;
+    public bool QaMode => qaMode;
     public bool IsAttacking => attackTime > 0f;
     public bool IsDodging => dodgeTime > 0f;
 
@@ -91,9 +100,6 @@ public sealed class VroidActionMotor : MonoBehaviour
             weaponVisual.gameObject.SetActive(root != null);
         }
         bones.Clear();
-        baseRelativeRotations.Clear();
-        baseLocalRotations.Clear();
-        baseLocalPositions.Clear();
         slashMotion = null;
         dodgeMotion = null;
         hasFootReference = false;
@@ -134,9 +140,6 @@ public sealed class VroidActionMotor : MonoBehaviour
             Transform t = animator.GetBoneTransform(bone);
             if (t == null) continue;
             bones[bone] = t;
-            baseRelativeRotations[t] = Quaternion.Inverse(transform.rotation) * t.rotation;
-            baseLocalRotations[t] = t.localRotation;
-            baseLocalPositions[t] = t.localPosition;
         }
 
         avatarBaseLocalPosition = avatarRoot.localPosition;
@@ -149,6 +152,33 @@ public sealed class VroidActionMotor : MonoBehaviour
         }
 
         FitCharacterControllerToAvatar(root);
+
+        RuntimeAnimatorController locomotion =
+            Resources.Load<RuntimeAnimatorController>("VroidLocomotion");
+        if (locomotion != null)
+        {
+            animator.runtimeAnimatorController = locomotion;
+            animator.applyRootMotion = false;
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            animator.stabilizeFeet = true;
+            animator.SetFloat(MoveSpeedHash, 0f);
+            if (animator.layerCount > 1)
+            {
+                animator.SetLayerWeight(1, swordUpperBodyWeight);
+            }
+            animator.Play("Locomotion", 0, 0f);
+            if (animator.layerCount > 1)
+            {
+                animator.SetLayerWeight(1, swordUpperBodyWeight);
+                animator.Play("SwordUpperBody", 1, 0f);
+            }
+            animator.Update(0f);
+        }
+        else
+        {
+            Debug.LogWarning("VroidLocomotion controller was not found in Resources.");
+        }
+
         slashMotion = LoadMotion("HYMotionSlash");
         dodgeMotion = LoadMotion("HYMotionDodge");
 
@@ -159,6 +189,11 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private void Update()
     {
+        if (qaMode)
+        {
+            return;
+        }
+
         attackTime = Mathf.Max(0f, attackTime - Time.deltaTime);
         dodgeTime = Mathf.Max(0f, dodgeTime - Time.deltaTime);
         HandleTouchJoystick();
@@ -183,15 +218,16 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         Vector3 desired = CameraRelative(input);
         float moveAmount = Mathf.Clamp01(desired.magnitude);
+        bool wantsMove = moveAmount > 0.05f;
 
         if (IsDodging)
         {
             desired = dodgeDirection * 9.5f;
         }
-        else
+        else if (wantsMove)
         {
-            desired *= moveSpeed;
-            if (!IsAttacking && moveAmount > 0.05f)
+            desired = desired.normalized * moveSpeed;
+            if (!IsAttacking)
             {
                 Quaternion target = Quaternion.LookRotation(desired.normalized, Vector3.up);
                 transform.rotation = Quaternion.Slerp(
@@ -200,6 +236,18 @@ public sealed class VroidActionMotor : MonoBehaviour
                     1f - Mathf.Exp(-turnSharpness * Time.deltaTime));
             }
         }
+        else
+        {
+            desired = Vector3.zero;
+        }
+
+        float targetVisualMove = wantsMove && !IsAttacking && !IsDodging
+            ? Mathf.Lerp(0.36f, 0.58f, moveAmount)
+            : 0f;
+        locomotionVisualAmount = Mathf.MoveTowards(
+            locomotionVisualAmount,
+            targetVisualMove,
+            Time.deltaTime * 8f);
 
         if (controller.isGrounded) verticalVelocity = -1f;
         else verticalVelocity -= 20f * Time.deltaTime;
@@ -207,24 +255,62 @@ public sealed class VroidActionMotor : MonoBehaviour
         desired.y = verticalVelocity;
         controller.Move(desired * Time.deltaTime);
 
-        if (moveAmount > 0.05f && !IsDodging) walkClock += Time.deltaTime * (7.5f + moveAmount * 2f);
-
-        if (Ready)
+        if (Ready && animator.runtimeAnimatorController != null)
         {
-            ApplyProceduralPose(moveAmount);
+            float locomotionSpeed = wantsMove && !IsAttacking && !IsDodging
+                ? Mathf.Lerp(0.36f, 0.58f, moveAmount)
+                : 0f;
+            animator.SetFloat(MoveSpeedHash, locomotionSpeed, 0.10f, Time.deltaTime);
+
+            float naturalSpeed = Mathf.Max(0.1f, naturalJogSpeed);
+            float targetPlayback = locomotionSpeed > 0f
+                ? Mathf.Clamp(moveSpeed / naturalSpeed, 0.82f, 1.12f)
+                : 1f;
+            animator.speed = Mathf.MoveTowards(
+                animator.speed,
+                targetPlayback,
+                Time.deltaTime * 5f);
+
+            if (animator.layerCount > 1)
+            {
+                float targetUpperWeight = Mathf.Lerp(
+                    swordUpperBodyWeight,
+                    0.12f,
+                    locomotionVisualAmount / 0.58f);
+                animator.SetLayerWeight(1, targetUpperWeight);
+            }
         }
     }
 
     private void LateUpdate()
     {
-        CorrectVisualGrounding();
-        UpdateWeaponPose();
-        if (weaponTrail != null)
+        if (Ready && (IsAttacking || IsDodging))
         {
-            weaponTrail.emitting = Ready && IsAttacking;
+            ApplyActionPose();
+        }
+
+        CorrectVisualGrounding();
+        if (qaMode)
+        {
+            UpdateWeaponPose();
+            if (weaponTrail != null) weaponTrail.emitting = false;
+        }
+        else
+        {
+            UpdateWeaponPose();
+            if (weaponTrail != null)
+            {
+                weaponTrail.emitting = Ready && IsAttacking;
+            }
         }
 
         if (viewCamera == null) return;
+
+        if (qaMode)
+        {
+            UpdateQaCamera();
+            return;
+        }
 
         Vector3 desired = transform.position
             - transform.forward * cameraDistance
@@ -235,6 +321,101 @@ public sealed class VroidActionMotor : MonoBehaviour
             1f - Mathf.Exp(-10f * Time.deltaTime));
 
         Vector3 look = transform.position + Vector3.up * cameraLookHeight;
+        viewCamera.transform.rotation = Quaternion.LookRotation(
+            look - viewCamera.transform.position,
+            Vector3.up);
+    }
+
+    public void SetQaPose(
+        string motion,
+        float phase,
+        string view,
+        float upperBodyWeight,
+        Vector3 weaponEuler)
+    {
+        if (!Ready || animator.runtimeAnimatorController == null) return;
+
+        qaMode = true;
+        weaponHandLocalEuler = weaponEuler;
+        attackTime = 0f;
+        dodgeTime = 0f;
+        controller.enabled = false;
+
+        float speed = motion switch
+        {
+            "walk" or "walkformal" => 0.35f,
+            "jog" => 1f,
+            _ => 0f,
+        };
+
+        string stateName = motion switch
+        {
+            "swordidle" => "QA_SwordIdle",
+            "walk" => "QA_Walk",
+            "walkformal" => "QA_WalkFormal",
+            "jog" => "QA_Jog",
+            _ => "QA_Idle",
+        };
+
+        qaCameraYaw = view switch
+        {
+            "front" => 180f,
+            "side" => 90f,
+            "back" => 0f,
+            _ => 215f,
+        };
+
+        animator.speed = 0f;
+        animator.SetFloat(MoveSpeedHash, speed);
+        if (animator.layerCount > 1)
+        {
+            animator.SetLayerWeight(1, Mathf.Clamp01(upperBodyWeight));
+        }
+        animator.Play(stateName, 0, Mathf.Repeat(phase, 1f));
+        if (animator.layerCount > 1)
+        {
+            animator.Play("SwordUpperBody", 1, 0f);
+        }
+        animator.Update(0f);
+
+        CorrectVisualGrounding();
+        UpdateWeaponPose();
+        if (weaponTrail != null) weaponTrail.emitting = false;
+        UpdateQaCamera();
+
+        Debug.Log(
+            $"QA_POSE motion={motion} phase={phase:F3} view={view} " +
+            $"speed={speed:F2} upper={upperBodyWeight:F2} " +
+            $"weaponEuler={weaponEuler.x:F0},{weaponEuler.y:F0},{weaponEuler.z:F0}");
+    }
+
+    public void ExitQaPose()
+    {
+        if (!qaMode) return;
+
+        qaMode = false;
+        if (animator != null)
+        {
+            animator.speed = 1f;
+            animator.SetFloat(MoveSpeedHash, 0f);
+            if (animator.layerCount > 1)
+            {
+                animator.SetLayerWeight(1, swordUpperBodyWeight);
+            }
+            animator.Play("Locomotion", 0, 0f);
+        }
+        controller.enabled = true;
+        if (weaponVisual != null) weaponVisual.gameObject.SetActive(Ready);
+    }
+
+    private void UpdateQaCamera()
+    {
+        if (viewCamera == null) return;
+
+        Quaternion yaw = Quaternion.Euler(0f, qaCameraYaw, 0f);
+        Vector3 offset = yaw * (Vector3.back * 3.25f);
+        Vector3 look = transform.position + Vector3.up * 0.92f;
+        viewCamera.transform.position = look + offset + Vector3.up * 0.10f;
         viewCamera.transform.rotation = Quaternion.LookRotation(
             look - viewCamera.transform.position,
             Vector3.up);
@@ -288,18 +469,8 @@ public sealed class VroidActionMotor : MonoBehaviour
         return forward * input.y + right * input.x;
     }
 
-    private void ApplyProceduralPose(float moveAmount)
+    private void ApplyActionPose()
     {
-        foreach ((Transform t, Quaternion localRotation) in baseLocalRotations)
-        {
-            if (t == null) continue;
-            t.localRotation = localRotation;
-            if (baseLocalPositions.TryGetValue(t, out Vector3 localPosition))
-            {
-                t.localPosition = localPosition;
-            }
-        }
-
         if (IsDodging)
         {
             float u = Mathf.Clamp01(1f - dodgeTime / DodgeDuration);
@@ -325,28 +496,24 @@ public sealed class VroidActionMotor : MonoBehaviour
             }
             else
             {
-                float slash = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - 0.18f) / 0.55f));
-                float recover = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((u - 0.75f) / 0.25f));
+                float slash = Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01((u - 0.18f) / 0.55f));
+                float recover = Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01((u - 0.75f) / 0.25f));
                 float amount = Mathf.Lerp(slash, 0f, recover);
-                Rotate(HumanBodyBones.Chest, Vector3.up, Mathf.Lerp(-18f, 32f, amount));
-                Rotate(HumanBodyBones.RightUpperArm, Vector3.right, -52f * Mathf.Sin(u * Mathf.PI));
+                Rotate(
+                    HumanBodyBones.Chest,
+                    Vector3.up,
+                    Mathf.Lerp(-18f, 32f, amount));
+                Rotate(
+                    HumanBodyBones.RightUpperArm,
+                    Vector3.right,
+                    -52f * Mathf.Sin(u * Mathf.PI));
             }
-            return;
-        }
-
-        if (moveAmount > 0.05f)
-        {
-            float swing = Mathf.Sin(walkClock) * 25f * moveAmount;
-            Rotate(HumanBodyBones.LeftUpperLeg, Vector3.right, swing);
-            Rotate(HumanBodyBones.RightUpperLeg, Vector3.right, -swing);
-            Rotate(HumanBodyBones.LeftUpperArm, Vector3.right, -swing * 0.72f);
-            Rotate(HumanBodyBones.RightUpperArm, Vector3.right, swing * 0.72f);
-            Rotate(HumanBodyBones.LeftLowerLeg, Vector3.right, Mathf.Max(0f, -swing) * 0.72f);
-            Rotate(HumanBodyBones.RightLowerLeg, Vector3.right, Mathf.Max(0f, swing) * 0.72f);
-
-            float bodyCounter = Mathf.Sin(walkClock) * 3.2f * moveAmount;
-            Rotate(HumanBodyBones.Spine, Vector3.up, -bodyCounter);
-            Rotate(HumanBodyBones.Chest, Vector3.up, bodyCounter * 0.65f);
         }
     }
 
@@ -429,8 +596,7 @@ public sealed class VroidActionMotor : MonoBehaviour
         foreach (MotionTrack track in motion.tracks)
         {
             if (!bones.TryGetValue(track.bone, out Transform target) ||
-                target == null ||
-                !baseLocalRotations.TryGetValue(target, out Quaternion rest))
+                target == null)
             {
                 continue;
             }
@@ -449,7 +615,7 @@ public sealed class VroidActionMotor : MonoBehaviour
                 Quaternion.identity,
                 delta,
                 envelope * anatomicalWeight);
-            target.localRotation = rest * delta;
+            target.localRotation = target.localRotation * delta;
         }
     }
 
@@ -492,9 +658,7 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         if (!Ready ||
             !bones.TryGetValue(HumanBodyBones.RightHand, out Transform hand) ||
-            !bones.TryGetValue(HumanBodyBones.RightLowerArm, out Transform lowerArm) ||
-            hand == null ||
-            lowerArm == null)
+            hand == null)
         {
             weaponVisual.gameObject.SetActive(false);
             return;
@@ -502,23 +666,26 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         weaponVisual.gameObject.SetActive(true);
 
-        Vector3 forward = hand.position - lowerArm.position;
-        if (forward.sqrMagnitude < 1e-6f)
+        Vector3 weaponEuler;
+        if (qaMode)
         {
-            forward = transform.forward;
+            weaponEuler = weaponHandLocalEuler;
         }
-        forward.Normalize();
-
-        Vector3 up = Vector3.ProjectOnPlane(Vector3.up, forward);
-        if (up.sqrMagnitude < 1e-5f)
+        else if (IsAttacking || IsDodging)
         {
-            up = Vector3.ProjectOnPlane(transform.right, forward);
+            weaponEuler = weaponMoveLocalEuler;
         }
-        up.Normalize();
+        else
+        {
+            weaponEuler = Vector3.Lerp(
+                weaponIdleLocalEuler,
+                weaponMoveLocalEuler,
+                locomotionVisualAmount);
+        }
 
-        weaponVisual.SetPositionAndRotation(
-            hand.position + forward * 0.055f,
-            Quaternion.LookRotation(forward, up));
+        Quaternion rotation = hand.rotation * Quaternion.Euler(weaponEuler);
+        Vector3 position = hand.TransformPoint(weaponHandLocalPosition);
+        weaponVisual.SetPositionAndRotation(position, rotation);
     }
 
     private void CorrectVisualGrounding()
@@ -680,6 +847,8 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private void OnGUI()
     {
+        if (qaMode) return;
+
         float scale = Mathf.Clamp(Screen.width / 430f, 0.78f, 1.25f);
         Rect safe = Screen.safeArea;
         float size = 72f * scale;
