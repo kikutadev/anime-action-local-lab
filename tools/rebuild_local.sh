@@ -14,13 +14,18 @@ if [[ "$HYMOTION_ROOT" != /* ]]; then
   HYMOTION_ROOT="$ROOT/$HYMOTION_ROOT"
 fi
 
-echo "[1/4] Generate Blender anime fighter from $CHARACTER_SPEC"
-"$BLENDER_BIN" -b --python "$ROOT/blender/generate_anime_fighter.py" -- --spec "$CHARACTER_SPEC"
-mkdir -p "$ROOT/unity/Assets/Models"
-cp "$ROOT/generated/anime_fighter.fbx" "$ROOT/unity/Assets/Models/AnimeFighter.fbx"
+echo "[1/3] Prepare runtime assets"
+if [[ "${RUN_LEGACY_CHARACTER:-0}" == "1" ]]; then
+  echo "Generate legacy Blender anime fighter from $CHARACTER_SPEC"
+  "$BLENDER_BIN" -b --python "$ROOT/blender/generate_anime_fighter.py" -- --spec "$CHARACTER_SPEC"
+  mkdir -p "$ROOT/unity/Assets/Models"
+  cp "$ROOT/generated/anime_fighter.fbx" "$ROOT/unity/Assets/Models/AnimeFighter.fbx"
+else
+  echo "Skip legacy Blender fighter (set RUN_LEGACY_CHARACTER=1 to regenerate)"
+fi
 
 if [[ "${RUN_HYMOTION:-0}" == "1" ]]; then
-  echo "[2/4] Generate HY-Motion attack and dodge"
+  echo "Generate HY-Motion attack and dodge"
   PY="$HYMOTION_ROOT/.venv/bin/python"
   if [[ ! -x "$PY" ]]; then
     echo "HY-Motion venv not found: $PY" >&2
@@ -55,10 +60,10 @@ if [[ "${RUN_HYMOTION:-0}" == "1" ]]; then
     --input "$ROOT/generated/hymotion/dodge.npz" \
     --output "$ROOT/unity/Assets/Resources/HYMotionDodge.json"
 else
-  echo "[2/4] Keep checked-in HY-Motion clips (set RUN_HYMOTION=1 to regenerate)"
+  echo "Keep checked-in HY-Motion clips (set RUN_HYMOTION=1 to regenerate)"
 fi
 
-echo "[3/4] Build verified Unity WebGL"
+echo "[2/3] Build verified Unity WebGL"
 "$UNITY_BIN" \
   -batchmode -nographics -quit \
   -projectPath "$ROOT/unity" \
@@ -66,11 +71,17 @@ echo "[3/4] Build verified Unity WebGL"
   -executeMethod AnimeActionWebBuild.BuildWebGl \
   -logFile "$ROOT/unity-build.log"
 
-if grep -Eq "error CS|Exception:|Build failed" "$ROOT/unity-build.log"; then
-  echo "Unity log contains errors" >&2
-  grep -nE "error CS|Exception:|Build failed" "$ROOT/unity-build.log" >&2
+if grep -Eq "error CS|Build failed|Aborting batchmode due to fatal error" "$ROOT/unity-build.log"; then
+  echo "Unity build contains fatal errors" >&2
+  grep -nE "error CS|Build failed|Aborting batchmode due to fatal error" "$ROOT/unity-build.log" >&2
   exit 3
 fi
 
-echo "[4/4] Done"
-grep -E "asset acceptance|scene acceptance|Using Blender-generated|WebGL build succeeded" "$ROOT/unity-build.log" || true
+if ! grep -q "WebGL build succeeded:" "$ROOT/unity-build.log"; then
+  echo "Unity exited without the WebGL success marker" >&2
+  tail -120 "$ROOT/unity-build.log" >&2
+  exit 4
+fi
+
+echo "[3/3] Done"
+grep -E "HY-Motion asset acceptance|asset acceptance|scene acceptance|UAL_CONTROLLER|WebGL build succeeded" "$ROOT/unity-build.log" || true

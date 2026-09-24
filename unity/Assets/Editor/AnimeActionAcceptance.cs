@@ -10,15 +10,30 @@ public static class AnimeActionAcceptance
         public int fps;
         public int frameCount;
         public float duration;
+        public float[] rootTranslation;
+        public MotionBoneHeader[] bones;
         public string source;
+    }
+
+    [Serializable]
+    private sealed class MotionBoneHeader
+    {
+        public string name;
+        public float[] rotation;
     }
 
     public static void Validate()
     {
         ValidateGeneratedModel();
+        ValidateMotions();
+        Debug.Log("Anime action asset acceptance passed.");
+    }
+
+    public static void ValidateMotions()
+    {
         ValidateGeneratedMotion("Assets/Resources/HYMotionSlash.json", 30);
         ValidateGeneratedMotion("Assets/Resources/HYMotionDodge.json", 30);
-        Debug.Log("Anime action asset acceptance passed.");
+        Debug.Log("HY-Motion asset acceptance passed.");
     }
 
     public static void ValidateGeneratedScene()
@@ -107,6 +122,38 @@ public static class AnimeActionAcceptance
         if (header.duration < 0.9f)
         {
             throw new InvalidOperationException($"Generated motion is unexpectedly short: {assetPath}, {header.duration:F2}s");
+        }
+
+        float expectedDuration = header.frameCount / (float)header.fps;
+        if (Mathf.Abs(header.duration - expectedDuration) > 0.05f)
+        {
+            throw new InvalidOperationException(
+                $"Generated motion duration disagrees with frame timing: {assetPath}, " +
+                $"duration={header.duration:F3}s expected={expectedDuration:F3}s");
+        }
+
+        if (header.rootTranslation == null ||
+            header.rootTranslation.Length != header.frameCount * 3)
+        {
+            throw new InvalidOperationException(
+                $"Generated motion root track is missing or malformed: {assetPath}");
+        }
+
+        if (header.bones == null || header.bones.Length < 18)
+        {
+            throw new InvalidOperationException(
+                $"Generated motion has too few humanoid tracks: {assetPath}");
+        }
+
+        foreach (MotionBoneHeader bone in header.bones)
+        {
+            if (bone == null || string.IsNullOrEmpty(bone.name) ||
+                bone.rotation == null ||
+                bone.rotation.Length != header.frameCount * 4)
+            {
+                throw new InvalidOperationException(
+                    $"Generated motion contains a malformed bone track: {assetPath}");
+            }
         }
     }
 }

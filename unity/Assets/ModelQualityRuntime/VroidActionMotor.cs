@@ -42,6 +42,10 @@ public sealed class VroidActionMotor : MonoBehaviour
     public const float UalRunSpeed = 5.20f;
     private const float FallbackAttackDuration = 0.68f;
     private const float FallbackDodgeDuration = 0.46f;
+    private const float SlashSourceAnticipationPhase = 0.10f;
+    private const float SlashSourceContactPhase = 0.20f;
+    private const float SlashSourceFollowThroughPhase = 0.46f;
+    private const float SlashSourceRecoveryPhase = 0.82f;
     private static readonly int MoveSpeedHash = Animator.StringToHash("MoveSpeed");
     public Camera viewCamera;
     public Transform weaponVisual;
@@ -61,12 +65,21 @@ public sealed class VroidActionMotor : MonoBehaviour
     public float mouseCameraSensitivity = 0.18f;
     public float touchCameraSensitivity = 0.13f;
     public float swordUpperBodyWeight = 0.85f;
+    [Range(0.45f, 1.10f)]
+    public float attackDuration = 0.78f;
+    [Range(0.40f, 1.00f)]
+    public float attackRootScale = 0.72f;
     [Range(0.05f, 0.95f)]
     public float attackHitPhase = 0.42f;
+    [Range(0.45f, 0.90f)]
+    public float dodgeDuration = 0.62f;
     public Vector3 weaponHandLocalPosition = Vector3.zero;
     public Vector3 weaponHandLocalEuler = Vector3.zero;
     public Vector3 weaponIdleLocalEuler = new(0f, 0f, -90f);
     public Vector3 weaponMoveLocalEuler = new(0f, 90f, 0f);
+    public Vector3 weaponAttackWindupLocalEuler = new(8f, 82f, 24f);
+    public Vector3 weaponAttackContactLocalEuler = new(-8f, 4f, -88f);
+    public Vector3 weaponAttackFollowLocalEuler = new(0f, 0f, -90f);
 
     private CharacterController controller;
     private Animator animator;
@@ -106,6 +119,8 @@ public sealed class VroidActionMotor : MonoBehaviour
     private string qaMotion;
     private float qaPhase;
     private float qaCameraYaw;
+    private float qaCameraPitch;
+    private bool qaUseRuntimeWeaponPose;
 
     public bool Ready => animator != null;
     public bool QaMode => qaMode;
@@ -356,7 +371,8 @@ public sealed class VroidActionMotor : MonoBehaviour
             attackTime = Mathf.Max(0f, attackTime - deltaTime);
             float phase = Mathf.Clamp01(1f - attackTime / duration);
 
-            float root = SampleRootDistance(slashMotion, phase);
+            float sourcePhase = RemapSlashSourceTime(phase);
+            float root = SampleRootDistance(slashMotion, sourcePhase) * attackRootScale;
             float delta = root - actionRootDistance;
             actionRootDistance = root;
 
@@ -386,16 +402,148 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private float GetAttackDuration()
     {
-        return slashMotion != null && slashMotion.duration > 0.05f
-            ? slashMotion.duration
+        return attackDuration > 0.05f
+            ? attackDuration
             : FallbackAttackDuration;
     }
 
     private float GetDodgeDuration()
     {
-        return dodgeMotion != null && dodgeMotion.duration > 0.05f
-            ? dodgeMotion.duration
+        return dodgeDuration > 0.05f
+            ? dodgeDuration
             : FallbackDodgeDuration;
+    }
+
+    private static float RemapSlashSourceTime(float actionPhase)
+    {
+        float phase = Mathf.Clamp01(actionPhase);
+
+        if (phase <= 0.12f)
+        {
+            return Mathf.Lerp(
+                0f,
+                SlashSourceAnticipationPhase,
+                Mathf.SmoothStep(0f, 1f, phase / 0.12f));
+        }
+
+        if (phase <= 0.42f)
+        {
+            return Mathf.Lerp(
+                SlashSourceAnticipationPhase,
+                SlashSourceContactPhase,
+                Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.12f, 0.42f, phase)));
+        }
+
+        if (phase <= 0.68f)
+        {
+            return Mathf.Lerp(
+                SlashSourceContactPhase,
+                SlashSourceFollowThroughPhase,
+                Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.42f, 0.68f, phase)));
+        }
+
+        if (phase <= 0.90f)
+        {
+            return Mathf.Lerp(
+                SlashSourceFollowThroughPhase,
+                SlashSourceRecoveryPhase,
+                Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.68f, 0.90f, phase)));
+        }
+
+        return Mathf.Lerp(
+            SlashSourceRecoveryPhase,
+            1f,
+            Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.90f, 1f, phase)));
+    }
+
+    private static float SmoothPulse(
+        float phase,
+        float start,
+        float peak,
+        float end)
+    {
+        if (phase <= start || phase >= end) return 0f;
+        if (phase <= peak)
+        {
+            return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(start, peak, phase));
+        }
+        return 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(peak, end, phase));
+    }
+
+    private void ApplySlashAccent(float actionPhase)
+    {
+        float phase = Mathf.Clamp01(actionPhase);
+        float windup = SmoothPulse(phase, 0.00f, 0.12f, 0.30f);
+        float strike = SmoothPulse(phase, 0.12f, 0.42f, 0.70f);
+        float follow = SmoothPulse(phase, 0.42f, 0.68f, 0.92f);
+
+        // The generated slash has useful arm motion but reads as arm-only from
+        // side and rear views. Layer a restrained kinetic chain on top:
+        // pelvis starts the load, chest follows, then both rotate through the hit
+        // and remain turned during follow-through instead of snapping neutral.
+        Rotate(
+            HumanBodyBones.Hips,
+            Vector3.up,
+            10f * windup - 13f * strike - 7f * follow);
+        Rotate(
+            HumanBodyBones.Spine,
+            Vector3.up,
+            13f * windup - 18f * strike - 10f * follow);
+        Rotate(
+            HumanBodyBones.Chest,
+            Vector3.up,
+            17f * windup - 24f * strike - 14f * follow);
+
+        // Keep the torso tall enough that the contact silhouette stays readable.
+        // The source clip otherwise folds forward at the exact frame where the
+        // blade should read most clearly.
+        Rotate(
+            HumanBodyBones.Spine,
+            Vector3.right,
+            -4f * strike - 2f * follow);
+        Rotate(
+            HumanBodyBones.Chest,
+            Vector3.right,
+            -3f * strike - 1f * follow);
+    }
+
+    private void ApplyDodgeAccent(float actionPhase)
+    {
+        float phase = Mathf.Clamp01(actionPhase);
+        float crouch = SmoothPulse(phase, 0.06f, 0.24f, 0.72f);
+
+        // HY-Motion provides useful leg drive but too much lateral upper-body
+        // folding. Reintroduce a smaller forward crouch so the action reads as
+        // push-off -> low travel instead of the avatar simply tipping sideways.
+        Rotate(HumanBodyBones.Hips, Vector3.right, 8f * crouch);
+        Rotate(HumanBodyBones.Spine, Vector3.right, 14f * crouch);
+        Rotate(HumanBodyBones.Chest, Vector3.right, 10f * crouch);
+
+        // The source dodge still carries a pronounced side roll even after
+        // retarget attenuation. Counter only that roll so the silhouette reads
+        // as a forward-loaded evasive push instead of the whole body falling over.
+        Rotate(HumanBodyBones.Hips, Vector3.forward, -8f * crouch);
+        Rotate(HumanBodyBones.Spine, Vector3.forward, -11f * crouch);
+        Rotate(HumanBodyBones.Chest, Vector3.forward, -9f * crouch);
+    }
+
+    private void ApplyRunAccent(float locomotionPhase, float weight)
+    {
+        float phase = Mathf.Repeat(locomotionPhase, 1f);
+        float strength = Mathf.Clamp01(weight);
+        if (strength <= 0.001f) return;
+
+        // A run should read from the torso even when the legs are partially
+        // occluded. Reinforce the authored reciprocal twist without replacing it.
+        float stride = Mathf.Cos(phase * Mathf.PI * 2f) * strength;
+        Rotate(HumanBodyBones.Hips, Vector3.up, 2.5f * stride);
+        Rotate(HumanBodyBones.Spine, Vector3.up, -3.5f * stride);
+        Rotate(HumanBodyBones.Chest, Vector3.up, -5.0f * stride);
+
+        // Slightly amplify arm opposition at full run speed. Keep the sword arm
+        // more restrained so the weapon does not whip across the torso.
+        Rotate(HumanBodyBones.LeftUpperArm, Vector3.right, 5.0f * stride);
+        Rotate(HumanBodyBones.RightUpperArm, Vector3.right, -2.5f * stride);
     }
 
     private static float SampleRootDistance(RuntimeMotion motion, float normalizedTime)
@@ -426,6 +574,15 @@ public sealed class VroidActionMotor : MonoBehaviour
         {
             ApplyQaActionPose();
         }
+        else if (Ready && currentPlanarSpeed > naturalJogSpeed * 0.90f)
+        {
+            AnimatorStateInfo state = animator.GetCurrentAnimatorStateInfo(0);
+            float runWeight = Mathf.InverseLerp(
+                naturalJogSpeed * 0.90f,
+                naturalRunSpeed,
+                currentPlanarSpeed);
+            ApplyRunAccent(state.normalizedTime, runWeight);
+        }
 
         CorrectVisualGrounding();
         if (qaMode)
@@ -438,7 +595,14 @@ public sealed class VroidActionMotor : MonoBehaviour
             UpdateWeaponPose();
             if (weaponTrail != null)
             {
-                weaponTrail.emitting = Ready && IsAttacking;
+                float attackPhase = IsAttacking
+                    ? Mathf.Clamp01(1f - attackTime / GetAttackDuration())
+                    : 0f;
+                weaponTrail.emitting =
+                    Ready &&
+                    IsAttacking &&
+                    attackPhase >= 0.24f &&
+                    attackPhase <= 0.70f;
             }
         }
 
@@ -470,7 +634,8 @@ public sealed class VroidActionMotor : MonoBehaviour
         float phase,
         string view,
         float upperBodyWeight,
-        Vector3 weaponEuler)
+        Vector3 weaponEuler,
+        bool useRuntimeWeaponPose)
     {
         if (!Ready || animator.runtimeAnimatorController == null) return;
 
@@ -478,6 +643,7 @@ public sealed class VroidActionMotor : MonoBehaviour
         qaMotion = motion;
         qaPhase = Mathf.Clamp01(phase);
         weaponHandLocalEuler = weaponEuler;
+        qaUseRuntimeWeaponPose = useRuntimeWeaponPose;
         attackTime = 0f;
         dodgeTime = 0f;
         controller.enabled = false;
@@ -504,9 +670,23 @@ public sealed class VroidActionMotor : MonoBehaviour
         qaCameraYaw = view switch
         {
             "front" => 180f,
-            "side" => 90f,
+            "front_threequarter_l" => 135f,
+            "side_l" => 90f,
+            "back_threequarter_l" => 45f,
             "back" => 0f,
+            "back_threequarter_r" => 315f,
+            "side_r" => 270f,
+            "front_threequarter_r" => 225f,
+            "side" => 90f,
+            "threequarter" => 215f,
+            "top_slight" or "low_slight" => 215f,
             _ => 215f,
+        };
+        qaCameraPitch = view switch
+        {
+            "top_slight" => 18f,
+            "low_slight" => -10f,
+            _ => 2f,
         };
 
         animator.speed = 0f;
@@ -521,6 +701,11 @@ public sealed class VroidActionMotor : MonoBehaviour
             animator.Play("SwordUpperBody", 1, 0f);
         }
         animator.Update(0f);
+
+        if (motion is "run" or "sprint")
+        {
+            ApplyRunAccent(qaPhase, 1f);
+        }
 
         CorrectVisualGrounding();
         UpdateWeaponPose();
@@ -540,6 +725,7 @@ public sealed class VroidActionMotor : MonoBehaviour
         qaMode = false;
         qaMotion = null;
         qaPhase = 0f;
+        qaUseRuntimeWeaponPose = false;
         if (animator != null)
         {
             animator.speed = 1f;
@@ -558,10 +744,10 @@ public sealed class VroidActionMotor : MonoBehaviour
     {
         if (viewCamera == null) return;
 
-        Quaternion yaw = Quaternion.Euler(0f, qaCameraYaw, 0f);
-        Vector3 offset = yaw * (Vector3.back * 3.25f);
+        Quaternion orbit = Quaternion.Euler(qaCameraPitch, qaCameraYaw, 0f);
+        Vector3 offset = orbit * (Vector3.back * 3.25f);
         Vector3 look = transform.position + Vector3.up * 0.92f;
-        viewCamera.transform.position = look + offset + Vector3.up * 0.10f;
+        viewCamera.transform.position = look + offset;
         viewCamera.transform.rotation = Quaternion.LookRotation(
             look - viewCamera.transform.position,
             Vector3.up);
@@ -638,11 +824,16 @@ public sealed class VroidActionMotor : MonoBehaviour
 
         if (qaMotion == "slash" && slashMotion != null)
         {
-            ApplyGeneratedMotion(slashMotion, qaPhase, true);
+            ApplyGeneratedMotion(
+                slashMotion,
+                RemapSlashSourceTime(qaPhase),
+                true);
+            ApplySlashAccent(qaPhase);
         }
         else if (qaMotion == "dodge" && dodgeMotion != null)
         {
             ApplyGeneratedMotion(dodgeMotion, qaPhase, false);
+            ApplyDodgeAccent(qaPhase);
         }
     }
 
@@ -654,6 +845,7 @@ public sealed class VroidActionMotor : MonoBehaviour
             if (dodgeMotion != null)
             {
                 ApplyGeneratedMotion(dodgeMotion, u, false);
+                ApplyDodgeAccent(u);
             }
             else
             {
@@ -669,7 +861,11 @@ public sealed class VroidActionMotor : MonoBehaviour
             float u = Mathf.Clamp01(1f - attackTime / GetAttackDuration());
             if (slashMotion != null)
             {
-                ApplyGeneratedMotion(slashMotion, u, true);
+                ApplyGeneratedMotion(
+                    slashMotion,
+                    RemapSlashSourceTime(u),
+                    true);
+                ApplySlashAccent(u);
             }
             else
             {
@@ -827,7 +1023,7 @@ public sealed class VroidActionMotor : MonoBehaviour
 
             float anatomicalWeight = attack
                 ? GetAttackRetargetWeight(track.bone)
-                : 1f;
+                : GetDodgeRetargetWeight(track.bone);
             delta = Quaternion.Slerp(
                 Quaternion.identity,
                 delta,
@@ -860,6 +1056,28 @@ public sealed class VroidActionMotor : MonoBehaviour
         };
     }
 
+    private static float GetDodgeRetargetWeight(HumanBodyBones bone)
+    {
+        return bone switch
+        {
+            // Keep the leg drive from HY-Motion, but reduce the large upper-body
+            // fold that made the dodge read as a sideways collapse.
+            HumanBodyBones.Hips => 0.48f,
+            HumanBodyBones.Spine => 0.32f,
+            HumanBodyBones.Chest => 0.20f,
+            HumanBodyBones.UpperChest => 0.15f,
+            HumanBodyBones.Neck or
+            HumanBodyBones.Head => 0.38f,
+
+            HumanBodyBones.LeftUpperArm or
+            HumanBodyBones.RightUpperArm or
+            HumanBodyBones.LeftLowerArm or
+            HumanBodyBones.RightLowerArm => 0.50f,
+
+            _ => 1f,
+        };
+    }
+
     private static Quaternion NormalizeQuaternion(Quaternion q)
     {
         float magnitude = Mathf.Sqrt(
@@ -886,9 +1104,18 @@ public sealed class VroidActionMotor : MonoBehaviour
         Vector3 weaponEuler;
         if (qaMode)
         {
-            weaponEuler = weaponHandLocalEuler;
+            weaponEuler =
+                qaUseRuntimeWeaponPose && qaMotion == "slash"
+                    ? ResolveAttackWeaponLocalEuler(qaPhase)
+                    : weaponHandLocalEuler;
         }
-        else if (IsAttacking || IsDodging)
+        else if (IsAttacking)
+        {
+            float attackPhase = Mathf.Clamp01(
+                1f - attackTime / GetAttackDuration());
+            weaponEuler = ResolveAttackWeaponLocalEuler(attackPhase);
+        }
+        else if (IsDodging)
         {
             weaponEuler = weaponMoveLocalEuler;
         }
@@ -903,6 +1130,53 @@ public sealed class VroidActionMotor : MonoBehaviour
         Quaternion rotation = hand.rotation * Quaternion.Euler(weaponEuler);
         Vector3 position = hand.TransformPoint(weaponHandLocalPosition);
         weaponVisual.SetPositionAndRotation(position, rotation);
+    }
+
+    private Vector3 ResolveAttackWeaponLocalEuler(float actionPhase)
+    {
+        float phase = Mathf.Clamp01(actionPhase);
+        Quaternion idle = Quaternion.Euler(weaponIdleLocalEuler);
+        Quaternion windup = Quaternion.Euler(weaponAttackWindupLocalEuler);
+        Quaternion contact = Quaternion.Euler(weaponAttackContactLocalEuler);
+        Quaternion follow = Quaternion.Euler(weaponAttackFollowLocalEuler);
+
+        if (phase <= 0.12f)
+        {
+            return Quaternion.Slerp(
+                idle,
+                windup,
+                Mathf.SmoothStep(0f, 1f, phase / 0.12f)).eulerAngles;
+        }
+
+        if (phase <= attackHitPhase)
+        {
+            return Quaternion.Slerp(
+                windup,
+                contact,
+                Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.InverseLerp(0.12f, attackHitPhase, phase))).eulerAngles;
+        }
+
+        if (phase <= 0.68f)
+        {
+            return Quaternion.Slerp(
+                contact,
+                follow,
+                Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.InverseLerp(attackHitPhase, 0.68f, phase))).eulerAngles;
+        }
+
+        return Quaternion.Slerp(
+            follow,
+            idle,
+            Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(0.68f, 1f, phase))).eulerAngles;
     }
 
     private void CorrectVisualGrounding()

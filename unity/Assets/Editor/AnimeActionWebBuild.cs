@@ -10,6 +10,7 @@ public static class AnimeActionWebBuild
     [MenuItem("Anime Action/Build WebGL")]
     public static void BuildWebGl()
     {
+        AnimeActionAcceptance.ValidateMotions();
         ModelQualityAcceptance.ValidateAssets();
         ModelQualityShowcaseSetup.Generate();
         ModelQualityAcceptance.ValidateScene();

@@ -124,14 +124,19 @@ public static class ModelQualityAcceptance
             motor.turnSharpness < 16f ||
             motor.cameraMinDistance < 1.5f || motor.cameraMaxDistance < motor.cameraMinDistance ||
             motor.swordUpperBodyWeight < 0f || motor.swordUpperBodyWeight > 1f ||
-            motor.attackHitPhase < 0.05f || motor.attackHitPhase > 0.95f)
+            motor.attackDuration < 0.45f || motor.attackDuration > 1.10f ||
+            motor.attackRootScale < 0.40f || motor.attackRootScale > 1.00f ||
+            motor.attackHitPhase < 0.05f || motor.attackHitPhase > 0.95f ||
+            motor.dodgeDuration < 0.45f || motor.dodgeDuration > 0.90f)
         {
             throw new InvalidOperationException(
                 $"Locomotion tuning is outside sane runtime ranges: " +
                 $"move={motor.moveSpeed:F2}, walk={motor.naturalWalkSpeed:F2}, " +
                 $"jog={motor.naturalJogSpeed:F2}, run={motor.naturalRunSpeed:F2}, " +
                 $"accel={motor.acceleration:F1}, decel={motor.deceleration:F1}, " +
-                $"turn={motor.turnSharpness:F1}, upper={motor.swordUpperBodyWeight:F2}.");
+                $"turn={motor.turnSharpness:F1}, upper={motor.swordUpperBodyWeight:F2}, " +
+                $"attackDuration={motor.attackDuration:F2}, attackRoot={motor.attackRootScale:F2}, " +
+                $"hitPhase={motor.attackHitPhase:F2}, dodgeDuration={motor.dodgeDuration:F2}.");
         }
 
         if (Vector3.Distance(motor.weaponVisual.localScale, Vector3.one * 0.78f) > 0.01f)

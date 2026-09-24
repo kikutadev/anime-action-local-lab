@@ -225,6 +225,7 @@ class CdpClient {
     this.signal = signal;
     this.nextId = 1;
     this.pending = new Map();
+    this.listeners = new Map();
     this.logs = [];
     this.closed = false;
 
@@ -246,6 +247,20 @@ class CdpClient {
       } else if (message.method === "Log.entryAdded") {
         this.logs.push("LOG " + message.params.entry.level + " " + message.params.entry.text);
       }
+
+      const listeners = this.listeners.get(message.method);
+      if (listeners) {
+        for (const listener of [...listeners]) {
+          try {
+            listener(message.params);
+          } catch (error) {
+            this.logs.push(
+              "QA_EVENT_LISTENER_ERROR " +
+              (error?.stack ?? error?.message ?? String(error)),
+            );
+          }
+        }
+      }
     };
 
     this.onClose = () => {
@@ -253,10 +268,23 @@ class CdpClient {
       const error = new Error("CDP WebSocket closed");
       for (const handler of this.pending.values()) handler.reject(error);
       this.pending.clear();
+      this.listeners.clear();
     };
 
     ws.addEventListener("message", this.onMessage);
     ws.addEventListener("close", this.onClose, { once: true });
+  }
+
+  on(method, listener) {
+    if (!this.listeners.has(method)) {
+      this.listeners.set(method, new Set());
+    }
+    const listeners = this.listeners.get(method);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listeners.delete(method);
+    };
   }
 
   async call(method, params = {}) {
@@ -537,6 +565,7 @@ export async function createQaRuntime({
       tempDir,
       logs: cdp.logs,
       call: cdp.call.bind(cdp),
+      on: cdp.on.bind(cdp),
       sleep: ms => sleep(ms, signal),
       signal,
       cleanup,

@@ -285,11 +285,34 @@ const cases = [
       try {
         await withQaRuntime(async runtime => {
           identity = captureIdentity(runtime);
+          await runtime.call("Runtime.enable");
+
+          let observedConsoleEvent = false;
+          const unsubscribe = runtime.on(
+            "Runtime.consoleAPICalled",
+            params => {
+              if (
+                (params.args ?? []).some(
+                  arg => arg.value === "qa-event-probe",
+                )
+              ) {
+                observedConsoleEvent = true;
+              }
+            },
+          );
+
           const result = await runtime.call("Runtime.evaluate", {
-            expression: "1 + 1",
+            expression: "console.log('qa-event-probe'); 1 + 1",
             returnByValue: true,
           });
           assert.equal(result.result.value, 2);
+          const observed = await waitUntil(
+            () => observedConsoleEvent,
+            1000,
+            25,
+          );
+          unsubscribe();
+          assert.equal(observed, true, "CDP event subscription must receive events");
         }, { publishDir, timeoutMs: 10000 });
         await assertRuntimeGone(identity);
       } finally {
@@ -400,7 +423,7 @@ sleep 30
             chromePath: fakeChrome,
             startupTimeoutMs: 450,
           }),
-          /Timed out waiting for QA page target|startup and cleanup both failed/,
+          /Timed out waiting for Chrome DevTools port file|Timed out waiting for QA page target|startup and cleanup both failed/,
         );
 
         const clean = await waitUntil(() => {

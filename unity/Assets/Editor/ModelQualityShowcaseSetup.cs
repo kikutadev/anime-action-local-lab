@@ -41,8 +41,14 @@ public static class ModelQualityShowcaseSetup
         motor.cameraMaxDistance = 6.2f;
         motor.cameraPitch = 13f;
         motor.swordUpperBodyWeight = 0.85f;
+        motor.attackDuration = 0.78f;
+        motor.attackRootScale = 0.72f;
+        motor.dodgeDuration = 0.62f;
         motor.weaponIdleLocalEuler = new Vector3(0f, 0f, -90f);
         motor.weaponMoveLocalEuler = new Vector3(0f, 90f, 0f);
+        motor.weaponAttackWindupLocalEuler = new Vector3(8f, 82f, 24f);
+        motor.weaponAttackContactLocalEuler = new Vector3(-8f, 4f, -88f);
+        motor.weaponAttackFollowLocalEuler = new Vector3(0f, 0f, -90f);
         controller.playerHost = player.transform;
         controller.actionMotor = motor;
 

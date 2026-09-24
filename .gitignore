@@ -13,6 +13,8 @@ unity/*.sln
 
 # Local runtime/test artifacts
 *.log
+*.pid
+qa-captures/
 unity-host.out
 webgl-preview*.png
 generated/

@@ -1,223 +1,290 @@
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 import { QA_ROOT, withQaRuntime } from "./qa_runtime.mjs";
+import {
+  buildIdleReferenceCaptures,
+  buildQaMatrixCaptures,
+  createManifestSkeleton,
+} from "./qa_pose_matrix.mjs";
 
-const OUT = path.join(QA_ROOT, "qa-captures", "current");
-fs.rmSync(OUT, { recursive: true, force: true });
-fs.mkdirSync(OUT, { recursive: true });
+const captureRoot = path.join(QA_ROOT, "qa-captures");
+const finalOut = path.join(captureRoot, "current");
+const workOut = path.join(captureRoot, `.current-${process.pid}-${Date.now()}`);
+fs.mkdirSync(workOut, { recursive: true });
 
-await withQaRuntime(async ({ call, logs, sleep }) => {
-  await call("Runtime.enable");
-  await call("Log.enable");
-  await call("Page.enable");
-  await call("Emulation.setDeviceMetricsOverride", {
-    width: 700,
-    height: 900,
-    deviceScaleFactor: 1,
-    mobile: false,
-    screenWidth: 700,
-    screenHeight: 900,
-  });
+function promoteOutput() {
+  fs.rmSync(finalOut, { recursive: true, force: true });
+  fs.renameSync(workOut, finalOut);
+}
 
-  const deadline = Date.now() + 45000;
-  while (Date.now() < deadline) {
-    const result = await call("Runtime.evaluate", {
-      expression: "!!window.unityInstance",
-      returnByValue: true,
+function removeWorkOutput() {
+  fs.rmSync(workOut, { recursive: true, force: true });
+}
+
+function runtimeFrameName(sequence, index) {
+  return `runtime_${sequence}_${String(index).padStart(2, "0")}`;
+}
+
+try {
+  await withQaRuntime(async ({ call, on, logs, sleep }) => {
+    await call("Runtime.enable");
+    await call("Log.enable");
+    await call("Page.enable");
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 700,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: 700,
+      screenHeight: 900,
     });
-    const avatarReady =
-      logs.some(line => line.includes("Loaded AvatarSample_C.vrm")) &&
-      logs.some(line => line.includes("VRoid action motor bound humanoid"));
-    if (result.result?.value === true && avatarReady) break;
-    await sleep(250);
-  }
 
-  if (!logs.some(line => line.includes("VRoid action motor bound humanoid"))) {
-    throw new Error("VRoid C did not become ready\n" + logs.slice(-60).join("\n"));
-  }
-
-  async function setPose(spec) {
-    const motion = spec.split("|")[0];
-    const before = logs.length;
-    const expression =
-      "window.unityInstance && window.unityInstance.SendMessage(" +
-      JSON.stringify("ModelQualityShowcase") + "," +
-      JSON.stringify("SetQaState") + "," +
-      JSON.stringify(spec) + ")";
-
-    const poseDeadline = Date.now() + 10000;
-    while (Date.now() < poseDeadline) {
-      await call("Runtime.evaluate", { expression });
-      await sleep(140);
-      if (
-        logs.slice(before).some(
-          line => line.includes("QA_POSE") && line.includes("motion=" + motion),
-        )
-      ) {
-        await sleep(160);
-        return;
-      }
+    const readyDeadline = Date.now() + 45000;
+    while (Date.now() < readyDeadline) {
+      const result = await call("Runtime.evaluate", {
+        expression: "!!window.unityInstance",
+        returnByValue: true,
+      });
+      const avatarReady =
+        logs.some(line => line.includes("Loaded AvatarSample_C.vrm")) &&
+        logs.some(line => line.includes("VRoid action motor bound humanoid"));
+      if (result.result?.value === true && avatarReady) break;
+      await sleep(250);
     }
-    throw new Error("QA pose did not become ready: " + spec + "\n" + logs.slice(-40).join("\n"));
-  }
 
-  async function screenshot(name) {
-    const shot = await call("Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-      captureBeyondViewport: false,
-    });
-    fs.writeFileSync(path.join(OUT, name + ".png"), Buffer.from(shot.data, "base64"));
-  }
+    if (!logs.some(line => line.includes("VRoid action motor bound humanoid"))) {
+      throw new Error(
+        "VRoid C did not become ready\n" + logs.slice(-60).join("\n"),
+      );
+    }
 
-  const staticSpecs = [
-    ["idle_front", "idle|0|front|0.20|0|0|-35"],
-    ["idle_threequarter", "idle|0|threequarter|0.20|0|0|-35"],
-    ["idle_side", "idle|0|side|0.20|0|0|-35"],
-    ["walk_000", "walk|0.00|threequarter|0.15|0|0|-35"],
-    ["walk_025", "walk|0.25|threequarter|0.15|0|0|-35"],
-    ["walk_050", "walk|0.50|threequarter|0.15|0|0|-35"],
-    ["walk_075", "walk|0.75|threequarter|0.15|0|0|-35"],
-    ["jog_000", "jog|0.00|threequarter|0.05|0|0|-35"],
-    ["jog_025", "jog|0.25|threequarter|0.05|0|0|-35"],
-    ["jog_050", "jog|0.50|threequarter|0.05|0|0|-35"],
-    ["jog_075", "jog|0.75|threequarter|0.05|0|0|-35"],
-    ["run_000", "run|0.00|threequarter|0.03|0|0|-35"],
-    ["run_025", "run|0.25|threequarter|0.03|0|0|-35"],
-    ["run_050", "run|0.50|threequarter|0.03|0|0|-35"],
-    ["run_075", "run|0.75|threequarter|0.03|0|0|-35"],
-    ["slash_000", "slash|0.00|threequarter|0|0|90|0"],
-    ["slash_020", "slash|0.20|threequarter|0|0|90|0"],
-    ["slash_040", "slash|0.40|threequarter|0|0|90|0"],
-    ["slash_055", "slash|0.55|threequarter|0|0|90|0"],
-    ["slash_075", "slash|0.75|threequarter|0|0|90|0"],
-    ["slash_095", "slash|0.95|threequarter|0|0|90|0"],
-    ["dodge_000", "dodge|0.00|threequarter|0|0|90|0"],
-    ["dodge_025", "dodge|0.25|threequarter|0|0|90|0"],
-    ["dodge_050", "dodge|0.50|threequarter|0|0|90|0"],
-    ["dodge_075", "dodge|0.75|threequarter|0|0|90|0"],
-    ["dodge_095", "dodge|0.95|threequarter|0|0|90|0"],
-  ];
+    async function setPose(capture) {
+      const before = logs.length;
+      const expression =
+        "window.unityInstance && window.unityInstance.SendMessage(" +
+        JSON.stringify("ModelQualityShowcase") + "," +
+        JSON.stringify("SetQaState") + "," +
+        JSON.stringify(capture.spec) + ")";
 
-  for (const [name, spec] of staticSpecs) {
-    await setPose(spec);
-    await screenshot(name);
-    console.log("captured", name);
-  }
+      const expectedPhase = Number(capture.phase).toFixed(3);
+      const poseDeadline = Date.now() + 10000;
+      while (Date.now() < poseDeadline) {
+        await call("Runtime.evaluate", { expression });
+        await sleep(110);
+        const acknowledged = logs.slice(before).some(line =>
+          line.includes("QA_POSE") &&
+          line.includes(`motion=${capture.action}`) &&
+          line.includes(`phase=${expectedPhase}`) &&
+          line.includes(`view=${capture.view}`),
+        );
+        if (acknowledged) {
+          await sleep(120);
+          return;
+        }
+      }
 
-  await call("Runtime.evaluate", {
-    expression:
-      "window.unityInstance && window.unityInstance.SendMessage(" +
-      JSON.stringify("ModelQualityShowcase") + "," +
-      JSON.stringify("ExitQaState") + ")",
-  });
-  await sleep(450);
-  await screenshot("runtime_idle");
+      throw new Error(
+        `QA pose did not become ready: ${capture.spec}\n` +
+        logs.slice(-40).join("\n"),
+      );
+    }
 
-  await call("Input.dispatchKeyEvent", {
-    type: "keyDown",
-    code: "KeyW",
-    key: "w",
-    windowsVirtualKeyCode: 87,
-    nativeVirtualKeyCode: 87,
-  });
-  for (let i = 0; i < 10; i++) {
-    await sleep(110);
-    await screenshot("runtime_run_" + String(i).padStart(2, "0"));
-  }
-  await call("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    code: "KeyW",
-    key: "w",
-    windowsVirtualKeyCode: 87,
-    nativeVirtualKeyCode: 87,
-  });
-  await sleep(350);
-  await screenshot("runtime_stop");
+    async function screenshot(name) {
+      const shot = await call("Page.captureScreenshot", {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      });
+      fs.writeFileSync(
+        path.join(workOut, name + ".png"),
+        Buffer.from(shot.data, "base64"),
+      );
+    }
 
-  await call("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x: 470,
-    y: 380,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await call("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: 590,
-    y: 380,
-    button: "left",
-    buttons: 1,
-  });
-  await sleep(180);
-  await call("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x: 590,
-    y: 380,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
-  await sleep(260);
-  await screenshot("runtime_camera_orbit");
+    async function sendShowcase(method, argument = "") {
+      const expression =
+        "window.unityInstance && window.unityInstance.SendMessage(" +
+        JSON.stringify("ModelQualityShowcase") + "," +
+        JSON.stringify(method) + "," +
+        JSON.stringify(argument) + ")";
+      await call("Runtime.evaluate", { expression });
+    }
 
-  async function tapKey(code, key, keyCode) {
-    await call("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      code,
-      key,
-      windowsVirtualKeyCode: keyCode,
-      nativeVirtualKeyCode: keyCode,
-    });
-    await sleep(45);
-    await call("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      code,
-      key,
-      windowsVirtualKeyCode: keyCode,
-      nativeVirtualKeyCode: keyCode,
-    });
-  }
+    async function captureRuntimeSequence(
+      sequence,
+      durationMs,
+      startAction,
+      stopAction = null,
+    ) {
+      const names = [];
+      const timestamps = [];
+      let recording = false;
+      let ackError = null;
 
-  await tapKey("KeyJ", "j", 74);
-  for (let i = 0; i < 8; i++) {
-    await sleep(180);
-    await screenshot("runtime_slash_" + String(i).padStart(2, "0"));
-  }
-  await sleep(260);
+      const unsubscribe = on("Page.screencastFrame", params => {
+        void call("Page.screencastFrameAck", {
+          sessionId: params.sessionId,
+        }).catch(error => {
+          ackError ??= error;
+        });
 
-  await tapKey("KeyK", "k", 75);
-  for (let i = 0; i < 7; i++) {
-    await sleep(145);
-    await screenshot("runtime_dodge_" + String(i).padStart(2, "0"));
-  }
-  await sleep(220);
+        if (!recording || names.length >= 80) return;
 
-  const fatal = logs.filter(line => /EXCEPTION|NullReferenceException|MissingReferenceException/.test(line));
-  if (fatal.length > 0) {
-    throw new Error("QA runtime logged fatal errors:\n" + fatal.slice(-20).join("\n"));
-  }
+        const name = runtimeFrameName(sequence, names.length);
+        fs.writeFileSync(
+          path.join(workOut, name + ".png"),
+          Buffer.from(params.data, "base64"),
+        );
+        names.push(name);
+        timestamps.push(params.metadata?.timestamp ?? null);
+      });
 
-  fs.writeFileSync(path.join(OUT, "qa.log"), logs.join("\n"));
-  fs.writeFileSync(
-    path.join(OUT, "manifest.json"),
-    JSON.stringify(
-      {
-        staticSpecs,
-        runtimeFrames: {
-          locomotion: 12,
-          cameraOrbit: 1,
-          slash: 8,
-          dodge: 7,
-        },
-        capturedAt: new Date().toISOString(),
+      try {
+        await call("Page.startScreencast", {
+          format: "png",
+          maxWidth: 560,
+          maxHeight: 720,
+          everyNthFrame: 1,
+        });
+        await sleep(80);
+        await startAction();
+        recording = true;
+        await sleep(durationMs);
+        recording = false;
+        if (stopAction) await stopAction();
+        await sleep(60);
+        await call("Page.stopScreencast");
+      } finally {
+        recording = false;
+        unsubscribe();
+        try {
+          await call("Page.stopScreencast");
+        } catch {}
+      }
+
+      if (ackError) throw ackError;
+      if (names.length < 4) {
+        throw new Error(
+          `Runtime screencast produced too few frames for ${sequence}: ${names.length}`,
+        );
+      }
+
+      const deltas = [];
+      for (let index = 1; index < timestamps.length; index++) {
+        const before = timestamps[index - 1];
+        const after = timestamps[index];
+        if (Number.isFinite(before) && Number.isFinite(after) && after > before) {
+          deltas.push((after - before) * 1000);
+        }
+      }
+      deltas.sort((a, b) => a - b);
+      const intervalMs = deltas.length > 0
+        ? Math.round(deltas[Math.floor(deltas.length / 2)])
+        : Math.max(20, Math.round(durationMs / names.length));
+
+      return {
+        frames: names,
+        intervalMs,
+        captureMode: "cdp-screencast",
+      };
+    }
+
+    const manifest = createManifestSkeleton();
+    const staticCaptures = [
+      ...buildIdleReferenceCaptures(),
+      ...buildQaMatrixCaptures(),
+    ];
+
+    for (const capture of staticCaptures) {
+      await setPose(capture);
+      await screenshot(capture.name);
+      manifest.staticCaptures.push({
+        ...capture,
+        file: capture.name + ".png",
+      });
+      console.log(
+        "captured",
+        capture.action,
+        capture.phaseId,
+        capture.view,
+      );
+    }
+
+    await sendShowcase("ExitQaState");
+    await sleep(300);
+    await screenshot("runtime_idle");
+
+    manifest.runtimeSequences.run = await captureRuntimeSequence(
+      "run",
+      1100,
+      async () => {
+        await call("Input.dispatchKeyEvent", {
+          type: "keyDown",
+          code: "KeyW",
+          key: "w",
+          windowsVirtualKeyCode: 87,
+          nativeVirtualKeyCode: 87,
+        });
       },
-      null,
-      2,
-    ),
-  );
-  console.log("QA_CAPTURE_DONE", OUT);
-}, {
-  timeoutMs: 150000,
-});
+      async () => {
+        await call("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          code: "KeyW",
+          key: "w",
+          windowsVirtualKeyCode: 87,
+          nativeVirtualKeyCode: 87,
+        });
+      },
+    );
+    await sleep(240);
+    await screenshot("runtime_stop");
+
+    manifest.runtimeSequences.slash = await captureRuntimeSequence(
+      "slash",
+      980,
+      async () => {
+        await sendShowcase("TriggerQaRuntimeAttack");
+      },
+    );
+    await sleep(180);
+
+    manifest.runtimeSequences.dodge = await captureRuntimeSequence(
+      "dodge",
+      820,
+      async () => {
+        await sendShowcase("TriggerQaRuntimeDodge");
+      },
+    );
+    await sleep(160);
+
+    const fatal = logs.filter(line =>
+      /EXCEPTION|NullReferenceException|MissingReferenceException/.test(line),
+    );
+    if (fatal.length > 0) {
+      throw new Error(
+        "QA runtime logged fatal errors:\n" + fatal.slice(-20).join("\n"),
+      );
+    }
+
+    manifest.runtimeStillFiles = {
+      idle: "runtime_idle.png",
+      stop: "runtime_stop.png",
+    };
+    manifest.capturedAt = new Date().toISOString();
+
+    fs.writeFileSync(path.join(workOut, "qa.log"), logs.join("\n"));
+    fs.writeFileSync(
+      path.join(workOut, "manifest.json"),
+      JSON.stringify(manifest, null, 2),
+    );
+    console.log("QA_CAPTURE_DONE", workOut);
+  }, {
+    timeoutMs: 180000,
+  });
+
+  promoteOutput();
+  console.log("QA_CAPTURE_PROMOTED", finalOut);
+} catch (error) {
+  removeWorkOutput();
+  throw error;
+}

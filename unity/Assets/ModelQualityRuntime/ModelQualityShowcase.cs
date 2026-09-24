@@ -124,12 +124,25 @@ public sealed class ModelQualityShowcase : MonoBehaviour
                 out weaponEuler.z);
         }
 
+        bool useRuntimeWeaponPose =
+            parts.Length > 7 &&
+            string.Equals(
+                parts[7],
+                "auto",
+                StringComparison.OrdinalIgnoreCase);
+
         qaActive = true;
         foreach (TrainingDummy dummy in FindObjectsByType<TrainingDummy>(FindObjectsSortMode.None))
         {
             dummy.gameObject.SetActive(false);
         }
-        actionMotor.SetQaPose(motion, phase, view, upperBodyWeight, weaponEuler);
+        actionMotor.SetQaPose(
+            motion,
+            phase,
+            view,
+            upperBodyWeight,
+            weaponEuler,
+            useRuntimeWeaponPose);
     }
 
     public void ExitQaState()
@@ -142,6 +155,24 @@ public sealed class ModelQualityShowcase : MonoBehaviour
         {
             dummy.gameObject.SetActive(true);
         }
+    }
+
+    public void TriggerQaRuntimeAttack()
+    {
+        if (qaActive)
+        {
+            ExitQaState();
+        }
+        actionMotor?.TriggerAttack();
+    }
+
+    public void TriggerQaRuntimeDodge()
+    {
+        if (qaActive)
+        {
+            ExitQaState();
+        }
+        actionMotor?.TriggerDodge();
     }
 
     public void Select(int index)
