@@ -48,7 +48,7 @@ export const QA_ACTIONS = Object.freeze({
       { id: "contact_b", phase: 0.50 },
     ],
     keyPhase: "passing",
-    upperBodyWeight: 0.03,
+    upperBodyWeight: 0,
     weaponEuler: [0, 0, -35],
   },
 });

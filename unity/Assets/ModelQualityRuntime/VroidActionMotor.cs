@@ -329,7 +329,7 @@ public sealed class VroidActionMotor : MonoBehaviour
             {
                 float targetUpperWeight = Mathf.Lerp(
                     swordUpperBodyWeight,
-                    0.12f,
+                    0f,
                     locomotionVisualAmount);
                 animator.SetLayerWeight(1, targetUpperWeight);
             }
@@ -540,10 +540,14 @@ public sealed class VroidActionMotor : MonoBehaviour
         Rotate(HumanBodyBones.Spine, Vector3.up, -3.5f * stride);
         Rotate(HumanBodyBones.Chest, Vector3.up, -5.0f * stride);
 
-        // Slightly amplify arm opposition at full run speed. Keep the sword arm
-        // more restrained so the weapon does not whip across the torso.
-        Rotate(HumanBodyBones.LeftUpperArm, Vector3.right, 5.0f * stride);
-        Rotate(HumanBodyBones.RightUpperArm, Vector3.right, -2.5f * stride);
+        // Sprint_Loop throws the free elbow behind the torso during the first
+        // half of the stride. Correct only that backward extreme; the forward
+        // half of the arm swing remains authored by the source clip.
+        float freeArmBackSwing = Mathf.Max(0f, stride);
+        Rotate(
+            HumanBodyBones.LeftUpperArm,
+            Vector3.right,
+            -22f * freeArmBackSwing);
     }
 
     private static float SampleRootDistance(RuntimeMotion motion, float normalizedTime)
@@ -702,11 +706,6 @@ public sealed class VroidActionMotor : MonoBehaviour
         }
         animator.Update(0f);
 
-        if (motion is "run" or "sprint")
-        {
-            ApplyRunAccent(qaPhase, 1f);
-        }
-
         CorrectVisualGrounding();
         UpdateWeaponPose();
         if (weaponTrail != null) weaponTrail.emitting = false;
@@ -807,7 +806,27 @@ public sealed class VroidActionMotor : MonoBehaviour
 
     private void ApplyQaActionPose()
     {
-        if (animator == null || (qaMotion != "slash" && qaMotion != "dodge"))
+        if (animator == null)
+        {
+            return;
+        }
+
+        if (qaMotion is "run" or "sprint")
+        {
+            // Run QA must re-evaluate the same Sprint_Loop frame every LateUpdate.
+            // Otherwise the Animator overwrites the runtime-only polish before the
+            // screenshot and the static matrix does not match gameplay.
+            animator.Play("QA_Sprint", 0, Mathf.Repeat(qaPhase, 1f));
+            if (animator.layerCount > 1)
+            {
+                animator.SetLayerWeight(1, 0f);
+            }
+            animator.Update(0f);
+            ApplyRunAccent(qaPhase, 1f);
+            return;
+        }
+
+        if (qaMotion != "slash" && qaMotion != "dodge")
         {
             return;
         }
